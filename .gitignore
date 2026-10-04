@@ -1,0 +1,6 @@
+/build/
+*.wad
+*.WAD
+*.bin
+*.elf
+*.map
