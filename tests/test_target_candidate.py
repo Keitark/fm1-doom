@@ -4,7 +4,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
-from build_target_candidate import iis_heap_allocations, task_heap_budget, usb_heap_allocations
+from build_target_candidate import (iis_heap_allocations, task_heap_budget,
+                                    usb_heap_allocations, verify_sdfilesystem)
 
 
 class TargetBudgetTests(unittest.TestCase):
@@ -54,6 +55,19 @@ class TargetBudgetTests(unittest.TestCase):
         self.assertEqual(usb_heap_allocations(cdc, config)["total_requested_bytes"], 1236)
         with self.assertRaises(ValueError):
             usb_heap_allocations(cdc, config.replace("972", "1024"))
+
+    def test_sdfilesystem_keeps_stock_configuration_drivers(self):
+        nm = "\n".join((
+            "02000120 R _vfs_ops_begin", "02000120 R sdfile_vfs_ops",
+            "02000198 R nor_sdfile_vfs_ops", "02000210 R sdfile_ext_vfs_ops",
+            "02000288 R _vfs_ops_end"))
+        self.assertEqual(verify_sdfilesystem(nm)["registration_bytes"], 360)
+        for changed in (nm.replace("sdfile_ext_vfs_ops", "missing_driver"),
+                        nm.replace("02000288", "02000300"),
+                        nm.replace("02000198", "02000199"),
+                        nm + "\n02000400 R fat_vfs_ops"):
+            with self.assertRaises(ValueError):
+                verify_sdfilesystem(changed)
 
 
 if __name__ == "__main__":

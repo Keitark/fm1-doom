@@ -34,13 +34,14 @@ artifacts; no game data is committed.
 ```powershell
 git submodule update --init
 python tools/make_lowres_engine.py
-python tools/stage_wad.py C:\path\to\doom1.wad build\stage-menu-ui.wad --map E1M1 --silent --prune-graphics --prune-sprites --no-attract-art --no-ui --menu-ui --pixelate 4 --weapon-pixelate 1 --fist-pixelate 2
+python tools/stage_wad.py C:\path\to\doom1.wad build\stage-menu-ui.wad --map E1M1 --silent --prune-graphics --prune-sprites --no-attract-art --no-ui --menu-ui --pixelate 4 --weapon-pixelate 1 --fist-pixelate 2 --compact-assets
 python tools/pack_archive.py build\stage-menu-ui.wad build\menu-ui-4k.fmd --block-size 4096
-python tools/make_sound_bank.py --wad C:\path\to\doom1.wad --output-dir build\sound-bank
-python tools/make_music_score.py C:\path\to\doom1.wad build\music-bank
+python tools/make_sound_bank.py --wad C:\path\to\doom1.wad --menu --output-dir build\sound-bank
+python tools/make_music_score.py C:\path\to\doom1.wad build\music-original
+python tools/make_genmidi_bank.py C:\path\to\doom1.wad build\opl-bank
 python tools/compile_target_engine.py --fm1-root F:\dev\fm1 --lowres
 python tools/compile_target_port.py --fm1-root F:\dev\fm1 --lowres
-python tools/build_target_candidate.py build\menu-ui-4k.fmd --fm1-root F:\dev\fm1
+python tools/build_target_candidate.py build\menu-ui-4k.fmd --fm1-root F:\dev\fm1 --music-bank build\music-original\music_score.c
 ```
 
 The stage tool's `--silent` removes audio from the WAD. Sound and music are
@@ -70,7 +71,31 @@ is recorded below. The generated file includes derived game
 data and is ignored by Git; keep it private. Check its size and SHA-256
 against the manifest before loading it in your UBOOT program.
 
-## Installed audio application
+## Current OPL/synth/knob candidate: not installed yet
+
+The local app is 554,800 B, SHA-256
+`a908bde332159a94b3ab86f8eb769cb103e3e70fd135087cb319383763f71360`.
+It leaves 30,156 B in the reviewed application slot. The losslessly compacted
+archive is 170,505 B, SHA-256
+`9fca855cbab806ea279510666b13186dbb9aae16c615783dd21df03211f97dcd`.
+Private effect/score/GENMIDI banks are 12,613/10,975/563 B.
+Static RAM is 477,912 B (`.ram0_data` 26,896 B, `.ram0_bss` 451,016 B).
+The linker heap is 45,644 B, leaving exactly the required 4,096 B after the
+reviewed startup model. This is a static budget, not measured free runtime heap.
+
+Unused FAT volume code is omitted; the three stock SDFILE configuration
+drivers and their 360-byte registration remain. The builder checks that
+closure. Doom reads its private XIP archive and does not mount a FAT volume.
+Lossless graphics compaction keeps all 493 lump names/order, original decoded
+patch/texture pixels and complete map data. It does not increase the 4 KiB
+decode cache. See [audio controls and verification](AUDIO.md).
+
+The offline changed-sector plan has 136 sectors with directory last and
+preserves stock boot/config/tail. It has passed update/restore simulation;
+no write of this revision has occurred yet. Physical knob operation, IIS
+deadline, screen capture and sustained controls remain to be checked.
+
+## Historical installed audio application
 
 The final local application is 583,216 B, leaving 1,740 B in the reviewed
 584,956 B slot. Its SHA-256 is

@@ -174,6 +174,22 @@ def parse_sections(text: str) -> dict[str, tuple[int, int]]:
                 text, re.M)}
 
 
+def verify_sdfilesystem(nm: str) -> dict:
+    """Keep the three stock configuration drivers and omit unused FAT volumes."""
+    symbols = {name: int(address, 16) for address, name in re.findall(
+        r"^([0-9a-fA-F]+)\s+[A-Za-z]\s+(\w+)$", nm, re.M)}
+    drivers = ("sdfile_vfs_ops", "nor_sdfile_vfs_ops", "sdfile_ext_vfs_ops")
+    if any(name not in symbols for name in (*drivers, "_vfs_ops_begin", "_vfs_ops_end")):
+        raise ValueError("stock SDFILE configuration drivers are missing")
+    begin, end = symbols["_vfs_ops_begin"], symbols["_vfs_ops_end"]
+    if end - begin != 3 * 120 or sorted(symbols[name] for name in drivers) != [begin, begin + 120, begin + 240]:
+        raise ValueError("VFS registration is not the reviewed three-driver SDFILE closure")
+    if any(name in symbols for name in ("fat_sdfile_fat_ops", "jl_fat_vfs_ops", "fat_vfs_ops")):
+        raise ValueError("unused FAT drivers remain linked")
+    return {"drivers": list(drivers), "registration_bytes": end - begin,
+            "fat_directory_extension": "unsupported", "fat_volume_support": False}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path, help="local 4 KiB-block FMD1 menu archive")
@@ -184,6 +200,9 @@ def main() -> int:
     parser.add_argument("--music-bank", type=Path,
                         default=ROOT / "build/music-bank/music_score.c",
                         help="private generated XIP E1M1 music bank source")
+    parser.add_argument("--genmidi-bank", type=Path,
+                        default=ROOT / "build/opl-bank/genmidi_bank.c",
+                        help="private original GENMIDI patch closure for E1M1")
     args = parser.parse_args()
     out = ROOT / "build/target-candidate"
     out.mkdir(parents=True, exist_ok=True)
@@ -212,6 +231,7 @@ def main() -> int:
     private_banks = {
         "sound": (args.sound_bank.resolve(), "fm1_doom_sound_bank"),
         "music": (args.music_bank.resolve(), "fm1_doom_music_score"),
+        "genmidi": (args.genmidi_bank.resolve(), "fm1_doom_genmidi_bank"),
     }
     bank_payloads = {}
     for name, (path, symbol) in private_banks.items():
@@ -250,7 +270,7 @@ def main() -> int:
                          ROOT / "tools/compile_target_engine.py", ROOT / "tools/compile_target_port.py",
                          usb / "vendor_overlay.py"])
     source_closure.update(ROOT / "tools" / name
-                          for name in ("make_sound_bank.py", "make_music_score.py"))
+                          for name in ("make_sound_bank.py", "make_music_score.py", "make_genmidi_bank.py"))
     for name, (path, _) in private_banks.items():
         bank_manifest = path.parent / "manifest.json"
         if bank_manifest.is_file():
@@ -266,7 +286,14 @@ def main() -> int:
                 raise ValueError("private music score has no verified event roundtrip")
             if name == "sound" and metadata.get("payload_bytes") != len(bank_payloads[name]):
                 raise ValueError("private sound bank size differs from its manifest")
+            if name == "genmidi" and (
+                    metadata.get("payload_sha256") != hashlib.sha256(bank_payloads[name]).hexdigest()
+                    or metadata.get("payload_bytes") != len(bank_payloads[name])
+                    or metadata.get("roundtrip_verified") is not True):
+                raise ValueError("private GENMIDI bank differs from its original-patch proof")
             source_closure.add(bank_manifest)
+        elif name == "genmidi":
+            raise ValueError("private GENMIDI bank has no verified patch manifest")
     for obj in engine_objects:
         source_path = generated / obj.name.removesuffix(".o")
         source_closure.update(check_object_freshness(obj, source_path, dependency_includes,
@@ -298,6 +325,7 @@ def main() -> int:
                           sdk / "apps/common/usb/device"]
     candidate_includes += [board.sdk_path(item[2:])
                            for item in board.make_list(make, "INCLUDES")]
+    candidate_includes.append(ROOT / "vendor/emu8950")
     includes = ["-I" + str(path) for path in candidate_includes]
     sources = [fm1 / "firmware/nes/boot/board.c",
                ROOT / "src/fm1_doom_target.c",
@@ -317,8 +345,10 @@ def main() -> int:
                       "rc = iis_open(&audio_pd, 0);"):
         if audio_text.count(statement) != 1:
             raise ValueError("audio platform configuration differs from the measured IIS allocation")
-    sources += [audio_source, ROOT / "src/fm1_doom_music.c",
-                fm1 / "firmware/nes/src/fm1_audio_queue.c"]
+    sources += [audio_source, ROOT / "src/fm1_doom_music.c", ROOT / "src/fm1_doom_opl.c",
+                ROOT / "vendor/emu8950/emu8950.c",
+                fm1 / "firmware/nes/src/fm1_audio_queue.c",
+                fm1 / "firmware/nes/src/fm1_volume.c"]
     sources += [path for path, _ in private_banks.values()]
     sources += [usb / name for name in ("descriptors.c", "usb_policy.c", "dma.c",
                                        "rx_channel.c", "boot_entry.c")]
@@ -348,7 +378,8 @@ def main() -> int:
                  "iis_set_dec_data_handler", "iis_set_sample_rate", "iis_channel_on",
                  "iis_channel_off", "fm1_doom_sound_bank", "fm1_doom_sound_entries",
                  "fm1_doom_sound_entry_count", "fm1_doom_sound_bank_bytes",
-                 "fm1_doom_music_score", "fm1_doom_music_score_len"]
+                 "fm1_doom_music_score", "fm1_doom_music_score_len",
+                 "fm1_doom_genmidi_bank", "fm1_doom_genmidi_bank_len"]
     retained += ["sprintf", "snprintf", "vsprintf", "vsnprintf", "print", "printf", "vprintf", "perror"]
     used.write_text(used.read_text() + "\n" + "\n".join(retained) + "\n")
     ld = (out / "sdk.ld").read_text()
@@ -421,6 +452,7 @@ def main() -> int:
         if sections.get(name, (0, 0))[0]:
             raise ValueError(f"unsupported external RAM section is nonempty: {name}")
     nm = run([str(board.TC / "llvm-nm.exe"), "-n", str(elf)])
+    filesystem = verify_sdfilesystem(nm)
     for name in retained:
         if not re.search(r"^[0-9a-fA-F]+\s+[A-Za-z]\s+" + re.escape(name) + r"$", nm, re.M):
             raise ValueError(f"required Doom/CDC link symbol is missing: {name}")
@@ -455,7 +487,7 @@ def main() -> int:
         bank_link_info[name] = {"source": str(path), "bytes": len(payload),
                                 "sha256": hashlib.sha256(payload).hexdigest(), "flash_vma": address}
     for symbol in ("fm1_doom_sound_entries", "fm1_doom_sound_entry_count", "fm1_doom_sound_bank_bytes",
-                   "fm1_doom_music_score_len"):
+                   "fm1_doom_music_score_len", "fm1_doom_genmidi_bank_len"):
         match = re.search(r"^([0-9a-fA-F]+)\s+[A-Za-z]\s+" + symbol + r"$", nm, re.M)
         if not match or not text_vma <= int(match.group(1), 16) < text_vma + text_size:
             raise ValueError(f"private sound metadata is outside XIP text: {symbol}")
@@ -494,6 +526,7 @@ def main() -> int:
         "ram0_bss_bytes": sections.get(".ram0_bss", (0, 0))[0],
         "linked_heap_bytes_before_runtime": heap_bytes,
         "startup_heap_budget": task_budget,
+        "filesystem": filesystem,
         "audio": {"output": "IIS_PORTC ALINK0 channel 3 signed 24-bit stereo at 44100 Hz",
                   "sfx_voices": 2, "private_xip_banks": bank_link_info,
                   "dynamic_dma_bytes": audio_allocations["total_requested_bytes"]},

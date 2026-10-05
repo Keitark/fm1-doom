@@ -6,6 +6,17 @@
 #include <string.h>
 #include <sys/stat.h>
 
+/* The SDK mounts SDFILE for configuration; this target has no FAT volume.
+ * VFS references this FAT-only directory extension even when FAT is unused.
+ * Returning unsupported here keeps the FAT drivers out of the application. */
+struct vfscan;
+int __fat_fscan_subpath_or_pre_dir(struct vfscan *scan, char *path,
+                                  unsigned char selected, unsigned depth)
+{
+    (void)scan; (void)path; (void)selected; (void)depth;
+    return -ENOSYS;
+}
+
 /* The SDK's shared string archive also pulls atof and software double math.
  * Doom needs only this bounded allocation-and-copy operation from that member. */
 char *strdup(const char *source)

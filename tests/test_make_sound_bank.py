@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from make_sound_bank import (extract_whx, extract_wad, encode_ima, encode_pcm_sound,
+                             encode_rice, decode_rice, native_pcm,
                              validate_sound, reference_pcm, emit_source)
 
 
@@ -104,7 +105,10 @@ class SoundBankTests(unittest.TestCase):
         # Source byte16/effective count-32 matches the pinned engine trim.
         ramp = struct.pack("<HHI", 3, 11025, 80) + bytes(range(80))
         trimmed = [(x - 128) * 256 for x in range(8, 56)]
-        self.assertEqual(encode_pcm_sound(ramp), encode_ima(trimmed, 11025))
+        self.assertEqual(reference_pcm(encode_pcm_sound(ramp)), trimmed)
+        self.assertEqual(encode_pcm_sound(ramp, "ima"), encode_ima(trimmed, 11025))
+        self.assertEqual(extract_wad(bytes(wad), (b"DSPISTOL",), "ima"),
+                         [(b"DSPISTOL", encode_pcm_sound(native, "ima"))])
         for offset, value in ((0, 4), (2, 0), (2, 22050), (4, 48), (4, 50), (4, 1_000_001)):
             bad = bytearray(native)
             struct.pack_into("<I" if offset == 4 else "<H", bad, offset, value)
@@ -141,10 +145,63 @@ class SoundBankTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             manifest = json.loads((output / "manifest.json").read_text())
             self.assertEqual(manifest["source_format"], "IWAD_PCM8")
-            self.assertEqual(manifest["payload_bytes"], 60)
-            self.assertEqual(manifest["ima_padding_max_samples"], 7)
+            # Three identical source sounds share one exact encoded waveform.
+            self.assertEqual(manifest["payload_bytes"], 12)
+            self.assertEqual(manifest["entry_bytes_before_deduplication"], 36)
+            self.assertTrue(manifest["lossless"])
+            self.assertTrue(manifest["decoded_matches_original_pcm8"])
+            self.assertEqual(manifest["codec"], "PCM8_RICE")
+            self.assertEqual(manifest["rice_max_bits_per_sample"], 15)
+            self.assertEqual(manifest["ima_padding_max_samples"], 0)
             generated = (output / "fm1_doom_sound_bank.c").read_bytes()
             self.assertEqual(hashlib.sha256(generated).hexdigest(), manifest["generated_source_sha256"])
+
+    def test_rice_exact_pcm8_boundaries_and_no_padded_samples(self):
+        for count in (1, 2, 8, 255, 256, 257, 511, 512, 513, 5629):
+            for rate in (8000, 11025):
+                # Every unsigned value, modulo wrap, both delta signs, blocks.
+                pcm = bytes((index * 73 + index // 9) & 255 for index in range(count))
+                encoded = encode_rice(pcm, rate)
+                self.assertEqual(struct.unpack_from("<HHI", encoded), (0x8103, rate, count))
+                self.assertEqual(decode_rice(encoded), pcm)
+                self.assertEqual(reference_pcm(encoded), [(x - 128) * 256 for x in pcm])
+                self.assertEqual(len(reference_pcm(encoded)), count)
+                self.assertEqual(encode_rice(pcm, rate), encoded)
+        for pcm, rate in ((b"", 11025), (b"\0", 0), (b"\0", 22050)):
+            with self.assertRaises(ValueError):
+                encode_rice(pcm, rate)
+
+    def test_rice_escape_padding_count_and_bit_eof_bounds(self):
+        # k=0: seven unary ones + eight raw zigzag bits (15-bit worst case).
+        escaped = struct.pack("<HHI", 0x8103, 11025, 2) + bytes((0, 0, 255, 127))
+        self.assertEqual(decode_rice(escaped), bytes((0, 128)))
+        self.assertEqual(reference_pcm(escaped), [-32768, 0])
+        encoded = encode_rice(bytes(range(256)) + bytes((255, 0)), 11025)
+        for end in range(8, len(encoded)):
+            with self.assertRaises(ValueError):
+                validate_sound(encoded[:end])
+        invalid = [escaped[:-1], escaped + b"\0", escaped[:-1] + b"\xff",
+                   escaped[:9] + b"\x08" + escaped[10:],
+                   struct.pack("<HHI", 0x8103, 11025, 2) + bytes((0, 7, 63, 0))]
+        for count in (0, 1_000_001, 4):
+            invalid.append(escaped[:4] + struct.pack("<I", count) + escaped[8:])
+        for data in invalid:
+            with self.assertRaises(ValueError):
+                decode_rice(data)
+            with self.assertRaises(ValueError):
+                validate_sound(data)
+
+    def test_native_menu_variants_and_identical_noway_dedup(self):
+        names = (b"DSPISTOL", b"DSOOF", b"DSITEMUP", b"DSSWTCHN", b"DSSWTCHX", b"DSNOWAY")
+        _, wad = wad_fixture(names, sample=160)
+        sounds = extract_wad(bytes(wad), names[:-1], optional=(b"DSNOWAY",))
+        self.assertEqual([name for name, _ in sounds], list(names))
+        source = emit_source(sounds)
+        self.assertIn('const uint32_t fm1_doom_sound_bank_bytes = 12u;', source)
+        self.assertIn('{"swtchx", fm1_doom_sound_bank + 0u, 12u}', source)
+        self.assertIn('{"noway", fm1_doom_sound_bank + 0u, 12u}', source)
+        _, plain = wad_fixture()
+        self.assertEqual(len(extract_wad(bytes(plain), (b"DSPISTOL",), optional=(b"DSNOWAY",))), 1)
 
 
 if __name__ == "__main__":

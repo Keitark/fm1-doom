@@ -7,6 +7,91 @@ void fm1_doom_usb_protocol_reset(fm1_doom_usb_protocol *protocol)
     memset(protocol, 0, sizeof(*protocol));
 }
 
+int fm1_doom_usb_frame_control_begin(fm1_doom_usb_frame_control *frame, uint32_t now_ms)
+{
+    if (frame->state) return -2;
+    if (!++frame->id) ++frame->id;
+    frame->started_ms = now_ms;
+    frame->state = 1;
+    return 0;
+}
+
+void fm1_doom_usb_frame_control_tick(fm1_doom_usb_frame_control *frame, uint32_t now_ms)
+{
+    if (frame->state && (uint32_t)(now_ms - frame->started_ms)
+                        >= FM1_DOOM_USB_FRAME_TIMEOUT_MS)
+        frame->state = 0;
+}
+
+static void game_status(const fm1_doom_usb_protocol_io *io)
+{
+    struct fm1_doom_usb_game game;
+    char output[448];
+    if (!io->get_game) { io->reply(io->context, "ERR GAME_UNAVAILABLE\n"); return; }
+    memset(&game, 0, sizeof(game));
+    io->get_game(io->context, &game);
+    snprintf(output, sizeof(output),
+             "DOOM GAME stage=%lu tic=%lu state=%d skill=%d x=%ld y=%ld angle=%lu health=%d bullets=%d shells=%d weapon=%d total=%d killed=%d sector=%d things=%d vertexes=%d lines=%d sides=%d sectors=%d segs=%d subsectors=%d nodes=%d menu=%lu coarse=%lu\n",
+             (unsigned long)game.stage, (unsigned long)game.tic, game.state, game.skill,
+             (long)game.x, (long)game.y, (unsigned long)game.angle, game.health,
+             game.bullets, game.shells, game.weapon, game.total_kills, game.kills,
+             game.sector, game.things, game.vertexes, game.lines, game.sides,
+             game.sectors, game.segs, game.subsectors, game.nodes,
+             (unsigned long)game.menu, (unsigned long)game.coarse);
+    io->reply(io->context, output);
+}
+
+static void frame_info(const fm1_doom_usb_protocol_io *io)
+{
+    fm1_doom_usb_frame_control frame;
+    char output[160];
+    if (!io->frame_info) { io->reply(io->context, "ERR FRAME_UNAVAILABLE\n"); return; }
+    io->frame_info(io->context, &frame);
+    snprintf(output, sizeof(output),
+             "DOOM FRAMEINFO state=%lu ready=%d id=%lu width=160 height=100 bytes=16512 coarse=%lu menu=%lu\n",
+             (unsigned long)frame.state, frame.state == 2, (unsigned long)frame.id,
+             (unsigned long)frame.coarse, (unsigned long)frame.menu);
+    io->reply(io->context, output);
+}
+
+static void frame_read(const char *text, const fm1_doom_usb_protocol_io *io)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    uint8_t data[FM1_DOOM_USB_FRAME_CHUNK];
+    fm1_doom_usb_frame_control frame;
+    char output[280];
+    uint32_t offset = 0;
+    size_t count, i, length;
+    if (!*text) { io->reply(io->context, "ERR FRAME_OFFSET\n"); return; }
+    while (*text) {
+        if (*text < '0' || *text > '9' || offset > (UINT32_MAX - 9u) / 10u) {
+            io->reply(io->context, "ERR FRAME_OFFSET\n"); return;
+        }
+        offset = offset * 10u + (unsigned)(*text++ - '0');
+    }
+    if (offset >= FM1_DOOM_USB_FRAME_BYTES) {
+        io->reply(io->context, "ERR FRAME_OFFSET\n"); return;
+    }
+    if (!io->frame_info || !io->frame_read) {
+        io->reply(io->context, "ERR FRAME_UNAVAILABLE\n"); return;
+    }
+    io->frame_info(io->context, &frame);
+    if (frame.state != 2) { io->reply(io->context, "ERR FRAME_NOT_READY\n"); return; }
+    count = io->frame_read(io->context, offset, data, sizeof(data));
+    if (!count || count > sizeof(data) || count > FM1_DOOM_USB_FRAME_BYTES - offset) {
+        io->reply(io->context, "ERR FRAME_NOT_READY\n"); return;
+    }
+    length = (size_t)snprintf(output, sizeof(output),
+             "DOOM FRAME id=%lu offset=%lu bytes=%u data=",
+             (unsigned long)frame.id, (unsigned long)offset, (unsigned)count);
+    for (i = 0; i < count; ++i) {
+        output[length++] = hex[data[i] >> 4];
+        output[length++] = hex[data[i] & 15u];
+    }
+    output[length++] = '\n'; output[length] = 0;
+    io->reply(io->context, output);
+}
+
 void fm1_doom_usb_protocol_status(const fm1_doom_usb_protocol_io *io)
 {
     struct fm1_doom_usb_status status;
@@ -55,11 +140,11 @@ void fm1_doom_usb_protocol_trace(const fm1_doom_usb_protocol_io *io)
 void fm1_doom_usb_protocol_audio(const fm1_doom_usb_protocol_io *io)
 {
     struct fm1_doom_usb_status status;
-    char output[352];
+    char output[512];
     memset(&status, 0, sizeof(status));
     io->get_status(io->context, &status);
     snprintf(output, sizeof(output),
-             "DOOM AUDIO ready=%d error=%d irqs=%lu frames=%lu sfx_started=%lu sfx_voices=%lu music_playing=%lu music_ticks=%lu music_events=%lu music_loops=%lu music_steals=%lu music_errors=%lu music_voices=%lu usb_stack_words=%lu max_irq_us=%lu\n",
+             "DOOM AUDIO ready=%d error=%d irqs=%lu frames=%lu sfx_started=%lu sfx_voices=%lu music_playing=%lu music_ticks=%lu music_events=%lu music_loops=%lu music_steals=%lu music_errors=%lu music_voices=%lu usb_stack_words=%lu max_irq_us=%lu volume_raw=%lu volume_gain=%lu volume_valid=%lu volume_errors=%lu synth_mode=%lu\n",
              status.audio_ready, status.audio_error,
              (unsigned long)status.audio_irqs, (unsigned long)status.audio_frames,
              (unsigned long)status.sfx_started, (unsigned long)status.sfx_voices,
@@ -67,11 +152,14 @@ void fm1_doom_usb_protocol_audio(const fm1_doom_usb_protocol_io *io)
              (unsigned long)status.music_events, (unsigned long)status.music_loops,
              (unsigned long)status.music_steals, (unsigned long)status.music_errors,
              (unsigned long)status.music_voices, (unsigned long)status.usb_stack_words,
-             (unsigned long)status.max_audio_irq_us);
+             (unsigned long)status.max_audio_irq_us,
+             (unsigned long)status.volume_raw, (unsigned long)status.volume_gain,
+             (unsigned long)status.volume_valid, (unsigned long)status.volume_errors,
+             (unsigned long)status.synth_mode);
     io->reply(io->context, output);
 }
 
-static void command(fm1_doom_usb_protocol *protocol, int isolated,
+static void command(fm1_doom_usb_protocol *protocol, int isolated, uint32_t now_ms,
                     const fm1_doom_usb_protocol_io *io)
 {
     if (!strcmp(protocol->line, "HELLO")) {
@@ -83,7 +171,21 @@ static void command(fm1_doom_usb_protocol *protocol, int isolated,
         fm1_doom_usb_protocol_trace(io);
     } else if (!strcmp(protocol->line, "DOOM AUDIO")) {
         fm1_doom_usb_protocol_audio(io);
+    } else if (!strcmp(protocol->line, "DOOM GAME")) {
+        game_status(io);
+    } else if (!strcmp(protocol->line, "DOOM FRAME BEGIN")) {
+        int result = io->frame_begin ? io->frame_begin(io->context, now_ms) : -1;
+        io->reply(io->context, result == 0 ? "OK DOOM FRAME REQUESTED\n"
+                  : result == -2 ? "ERR FRAME_BUSY\n" : "ERR FRAME_UNAVAILABLE\n");
+    } else if (!strcmp(protocol->line, "DOOM FRAMEINFO")) {
+        frame_info(io);
+    } else if (!strncmp(protocol->line, "DOOM FRAME READ ", 16)) {
+        frame_read(protocol->line + 16, io);
+    } else if (!strcmp(protocol->line, "DOOM FRAME END")) {
+        if (io->frame_end) io->frame_end(io->context);
+        io->reply(io->context, "OK DOOM FRAME END\n");
     } else if (!strcmp(protocol->line, "DOOM STOP")) {
+        if (io->frame_end) io->frame_end(io->context);
         io->request_stop(io->context);
         io->reply(io->context, "OK DOOM STOP REQUESTED\n");
     } else if (!strcmp(protocol->line, "UBOOT")) {
@@ -107,9 +209,11 @@ void fm1_doom_usb_protocol_tick(fm1_doom_usb_protocol *protocol,
                                uint32_t now_ms,
                                const fm1_doom_usb_protocol_io *io)
 {
+    if (io->frame_tick) io->frame_tick(io->context, now_ms);
     if ((protocol->used || protocol->dropping) &&
         (uint32_t)(now_ms - protocol->started_ms) >= FM1_DOOM_USB_FRAGMENT_TIMEOUT_MS) {
         fm1_doom_usb_protocol_reset(protocol);
+        if (io->frame_end) io->frame_end(io->context);
         io->reply(io->context, "ERR TIMEOUT ABORTED\n");
     }
 }
@@ -129,7 +233,7 @@ void fm1_doom_usb_protocol_feed(fm1_doom_usb_protocol *protocol,
                 io->reply(io->context, "ERR LINE ABORTED\n");
             } else {
                 protocol->line[protocol->used] = 0;
-                command(protocol, !prior_line && i + 1u == length, io);
+                command(protocol, !prior_line && i + 1u == length, now_ms, io);
             }
             protocol->used = protocol->dropping = 0;
             prior_line = 1;

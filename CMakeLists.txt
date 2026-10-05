@@ -57,15 +57,26 @@ if(FM1_DOOM_SOUND_BANK_SOURCE)
 endif()
 
 set(FM1_DOOM_MUSIC_BANK_SOURCE "" CACHE FILEPATH "Private generated FM-1 music score for host tests")
+set(FM1_DOOM_GENMIDI_BANK_SOURCE "" CACHE FILEPATH "Private original GENMIDI patch bank for host tests")
+set(FM1_DOOM_OPL_REFERENCE_SOURCE "" CACHE FILEPATH "Private independently generated original OPL reference fixture")
 if(FM1_DOOM_MUSIC_BANK_SOURCE)
-  if(NOT EXISTS "${FM1_DOOM_MUSIC_BANK_SOURCE}")
-    message(FATAL_ERROR "Music tests require the private generated music score")
+  if(NOT EXISTS "${FM1_DOOM_MUSIC_BANK_SOURCE}" OR NOT EXISTS "${FM1_DOOM_GENMIDI_BANK_SOURCE}")
+    message(FATAL_ERROR "Music tests require the private generated score and original GENMIDI bank")
   endif()
   add_executable(music_score_tests tests/music_score_tests.c src/fm1_doom_music.c
-    "${FM1_DOOM_MUSIC_BANK_SOURCE}")
-  target_include_directories(music_score_tests PRIVATE include "${DOOM_SRC}")
+    src/fm1_doom_opl.c vendor/emu8950/emu8950.c
+    "${FM1_DOOM_MUSIC_BANK_SOURCE}" "${FM1_DOOM_GENMIDI_BANK_SOURCE}")
+  target_include_directories(music_score_tests PRIVATE include vendor/emu8950 "${DOOM_SRC}")
   target_compile_definitions(music_score_tests PRIVATE FM1_TARGET_PI32V2=1 _CRT_SECURE_NO_WARNINGS)
   add_test(NAME target_music_score_contract COMMAND music_score_tests)
+  if(FM1_DOOM_OPL_REFERENCE_SOURCE)
+    add_executable(opl_reference_tests tests/opl_reference_tests.c src/fm1_doom_music.c
+      src/fm1_doom_opl.c vendor/emu8950/emu8950.c
+      "${FM1_DOOM_MUSIC_BANK_SOURCE}" "${FM1_DOOM_GENMIDI_BANK_SOURCE}" "${FM1_DOOM_OPL_REFERENCE_SOURCE}")
+    target_include_directories(opl_reference_tests PRIVATE include vendor/emu8950 "${DOOM_SRC}")
+    target_compile_definitions(opl_reference_tests PRIVATE FM1_TARGET_PI32V2=1 FM1_DOOM_OPL_TEST=1 _CRT_SECURE_NO_WARNINGS)
+    add_test(NAME original_opl_reference_contract COMMAND opl_reference_tests)
+  endif()
 endif()
 
 # Optional validation of the target allocation binding using the SDK headers

@@ -2,6 +2,21 @@
 
 ## Evidence from this branch
 
+The next OPL/synth/knob revision has built locally but is not installed yet:
+554,800 B app, 170,505 B losslessly compacted archive, 477,912 B static RAM,
+45,644 B linker heap and exactly 4,096 B reviewed startup reserve. It passes
+59 Python tests, target compilation/link, native music/FX/protocol contracts,
+and the complete independent DOS OPL reference. Sixteen-second digital mixes
+have no clipped samples or music errors. Device timing/volume acceptance is
+pending while the FM-1 is disconnected. Historical device evidence follows.
+
+The spawn-area report was investigated with both installed and compacted
+assets at a 296 KiB host zone. One F5 press near the first door opens sector 4,
+and the player reaches sector 52 where enemies attack. Straight movement from
+spawn normally hits the north wall; the room exit is to the right. Complete
+E1M1 map lumps are unchanged. Physical position/frame capture remains needed
+to identify the user's exact location.
+
 | Check | Result | Limit |
 | --- | --- | --- |
 | MSVC Release build | Pass, Doomgeneric plus FM-1 video/input adapter | Host only |

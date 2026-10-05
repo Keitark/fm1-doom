@@ -1,8 +1,8 @@
-"""Create a small private shareware IMA sound bank from a local WHX or IWAD.
+"""Create a small private shareware sound bank from a local WHX or IWAD.
 
 Generated samples are user-local game data and must remain outside Git.
-WHX sounds are copied unchanged. Native IWAD PCM8 sounds are encoded locally.
-Only original pistol, oof, pickup and optional menu-switch sounds are included.
+WHX IMA sounds are copied unchanged. Native IWAD PCM8 uses lossless bounded
+Rice coding by default. Pistol, oof, pickup and optional menu sounds are kept.
 """
 import argparse
 import hashlib
@@ -21,8 +21,10 @@ STEPS = (7,8,9,10,11,12,13,14,16,17,19,21,23,25,28,31,34,37,41,45,
 
 
 def reference_pcm(data: bytes) -> list[int]:
-    """Offline reference decoder following WHX low/high nibble block order."""
+    """Independent offline PCM reference for legacy IMA or exact PCM8/Rice."""
     validate_sound(data)
+    if data[1] == 129:
+        return [(sample - 128) * 256 for sample in decode_rice(data)]
     output = []
     for offset in range(8, len(data), 128):
         block = data[offset:offset + 128]
@@ -60,11 +62,16 @@ def emit_reference(sounds: list[tuple[bytes, bytes]]) -> str:
 
 
 def validate_sound(data: bytes) -> None:
-    if len(data) < 12 or data[:2] != b"\x03\x80":
-        raise ValueError("not bounded WHX IMA sound data")
+    if len(data) < 8 or data[:2] not in (b"\x03\x80", b"\x03\x81"):
+        raise ValueError("not bounded IMA or PCM8/Rice sound data")
     rate, samples = struct.unpack_from("<HI", data, 2)
     if rate not in (8000, 11025) or not 1 <= samples <= 1_000_000:
         raise ValueError("unsupported or unbounded sound rate/count")
+    if data[1] == 129:
+        decode_rice(data)
+        return
+    if len(data) < 12:
+        raise ValueError("truncated IMA sound")
     for offset in range(8, len(data), 128):
         block = data[offset:offset + 128]
         if (len(block) < 4 or (len(block) - 4) % 4
@@ -147,7 +154,112 @@ def encode_ima(samples: list[int], rate: int) -> bytes:
     return result
 
 
-def encode_pcm_sound(data: bytes) -> bytes:
+def encode_rice(pcm: bytes, rate: int) -> bytes:
+    """Exact PCM8, 256-sample blocks, at most 15 input bits per decoded sample.
+
+    A block stores first unsigned sample and Rice k, then signed modulo-256
+    deltas, zigzag-coded, LSB first. Seven unary ones escape to eight raw bits;
+    other values store q ones, a zero and k remainder bits. Final byte padding
+    is zero. The declared count determines the exact final block and duration.
+    """
+    if rate not in (8000, 11025) or not 1 <= len(pcm) <= 1_000_000:
+        raise ValueError("unsupported or unbounded PCM rate/samples")
+    out = bytearray(struct.pack("<HHI", 0x8103, rate, len(pcm)))
+    for offset in range(0, len(pcm), 256):
+        block = pcm[offset:offset + 256]
+        previous = block[0]
+        deltas = []
+        for sample in block[1:]:
+            signed = ((sample - previous + 128) & 255) - 128
+            previous = sample
+            deltas.append((signed << 1) ^ (signed >> 7))
+        sizes = [sum((value >> k) + 1 + k if (value >> k) < 7 else 15
+                     for value in deltas) for k in range(8)]
+        k = min(range(8), key=lambda index: sizes[index])
+        out.extend((block[0], k))
+        pending = count = 0
+
+        def bit(value: int) -> None:
+            nonlocal pending, count
+            pending |= value << count
+            count += 1
+            if count == 8:
+                out.append(pending)
+                pending = count = 0
+
+        def bits(value: int, amount: int) -> None:
+            for index in range(amount):
+                bit((value >> index) & 1)
+
+        for value in deltas:
+            quotient = value >> k
+            if quotient >= 7:
+                bits(127, 7)
+                bits(value, 8)
+            else:
+                bits((1 << quotient) - 1, quotient)
+                bit(0)
+                bits(value & ((1 << k) - 1), k)
+        if count:
+            out.append(pending)
+    encoded = bytes(out)
+    if decode_rice(encoded) != pcm:
+        raise ValueError("lossless PCM round trip failed")
+    return encoded
+
+
+def decode_rice(data: bytes) -> bytes:
+    """Bounds-checked independent offline decoder; no target code is reused."""
+    if len(data) < 8:
+        raise ValueError("truncated Rice header")
+    marker, rate, total = struct.unpack_from("<HHI", data)
+    if marker != 0x8103 or rate not in (8000, 11025) or not 1 <= total <= 1_000_000:
+        raise ValueError("unsupported Rice header")
+    output = bytearray()
+    offset = 8
+    while len(output) < total:
+        if len(data) - offset < 2 or data[offset + 1] > 7:
+            raise ValueError("truncated or invalid Rice block")
+        previous, k = data[offset:offset + 2]
+        offset += 2
+        samples = min(256, total - len(output))
+        output.append(previous)
+        position = 0
+
+        def bit() -> int:
+            nonlocal position
+            index = offset + position // 8
+            if index >= len(data):
+                raise ValueError("truncated Rice sample")
+            value = (data[index] >> (position & 7)) & 1
+            position += 1
+            return value
+
+        def bits(amount: int) -> int:
+            value = 0
+            for index in range(amount):
+                value |= bit() << index
+            return value
+
+        for _ in range(1, samples):
+            quotient = 0
+            while quotient < 7 and bit():
+                quotient += 1
+            value = bits(8) if quotient == 7 else (quotient << k) | bits(k)
+            if value > 255:
+                raise ValueError("Rice delta exceeds unsigned PCM8")
+            signed = (value >> 1) ^ -(value & 1)
+            previous = (previous + signed) & 255
+            output.append(previous)
+        if position & 7 and data[offset + position // 8] >> (position & 7):
+            raise ValueError("nonzero Rice alignment padding")
+        offset += (position + 7) // 8
+    if offset != len(data):
+        raise ValueError("trailing Rice sound data")
+    return bytes(output)
+
+
+def native_pcm(data: bytes) -> tuple[int, bytes]:
     """Read the original Doom DMX PCM8 header and apply the engine's trim.
 
     Match the pinned Doom/WHX converter: source starts at lump byte 16 and
@@ -159,11 +271,21 @@ def encode_pcm_sound(data: bytes) -> bytes:
     rate, count = struct.unpack_from("<HI", data, 2)
     if rate not in (8000, 11025) or not 49 <= count <= 1_000_000 or count > len(data) - 8:
         raise ValueError("unsupported or truncated DMX sound rate/count")
-    return encode_ima([(value - 128) * 256 for value in data[16:16 + count - 32]], rate)
+    return rate, data[16:16 + count - 32]
 
 
-def extract_wad(data: bytes, wanted: tuple[bytes, ...]) -> list[tuple[bytes, bytes]]:
-    """Validate an IWAD directory and encode only the requested PCM8 sounds."""
+def encode_pcm_sound(data: bytes, codec: str = "rice") -> bytes:
+    rate, pcm = native_pcm(data)
+    if codec == "rice":
+        return encode_rice(pcm, rate)
+    if codec == "ima":
+        return encode_ima([(value - 128) * 256 for value in pcm], rate)
+    raise ValueError("unsupported native sound codec")
+
+
+def extract_wad(data: bytes, wanted: tuple[bytes, ...], codec: str = "rice",
+                optional: tuple[bytes, ...] = ()) -> list[tuple[bytes, bytes]]:
+    """Validate an IWAD directory and encode the requested native PCM8 sounds."""
     if len(data) < 12:
         raise ValueError("truncated IWAD header")
     magic, count, directory = struct.unpack_from("<4sII", data)
@@ -176,28 +298,33 @@ def extract_wad(data: bytes, wanted: tuple[bytes, ...]) -> list[tuple[bytes, byt
         if start > len(data) or size > len(data) - start:
             raise ValueError("lump exceeds IWAD bounds")
         name = raw_name.split(b"\0", 1)[0].upper()
-        if name not in wanted:
+        if name not in wanted + optional:
             continue
         if name in found:
             raise ValueError("duplicate IWAD sound name")
-        found[name] = encode_pcm_sound(data[start:start + size])
+        found[name] = encode_pcm_sound(data[start:start + size], codec)
     if any(name not in found for name in wanted):
         raise ValueError("requested shareware sound is absent")
-    return [(name, found[name]) for name in wanted]
+    return [(name, found[name]) for name in wanted + optional if name in found]
 
 
 def emit_source(sounds: list[tuple[bytes, bytes]]) -> str:
     source = ['/* Private locally generated shareware sound data; do not commit. */',
               '#include "fm1_doom_sound.h"',
               'const uint8_t fm1_doom_sound_bank[] = {']
-    payload = b"".join(raw for _, raw in sounds)
+    # Identical original sounds such as DSOOF/DSNOWAY share exact bank bytes.
+    offsets = {}
+    payload = bytearray()
+    for _, raw in sounds:
+        if raw not in offsets:
+            offsets[raw] = len(payload)
+            payload.extend(raw)
     for offset in range(0, len(payload), 16):
         source.append("    " + ",".join(f"0x{x:02x}" for x in payload[offset:offset + 16]) + ",")
     source.extend(['};', 'const fm1_doom_sound_entry fm1_doom_sound_entries[] = {'])
-    offset = 0
     for name, raw in sounds:
+        offset = offsets[raw]
         source.append(f'    {{"{name[2:].decode().lower()}", fm1_doom_sound_bank + {offset}u, {len(raw)}u}},')
-        offset += len(raw)
     source.extend(['};', f'const uint32_t fm1_doom_sound_entry_count = {len(sounds)}u;',
                    f'const uint32_t fm1_doom_sound_bank_bytes = {len(payload)}u;', ''])
     return "\n".join(source)
@@ -209,27 +336,38 @@ def main() -> None:
     inputs.add_argument("--whx", type=Path, help="Local WHX with original IMA sounds")
     inputs.add_argument("--wad", type=Path, help="Local original doom1.wad IWAD with PCM8 sounds")
     parser.add_argument("--output-dir", type=Path, default=Path("build/sound-bank"))
-    parser.add_argument("--menu", action="store_true", help="Add original menu switch sound")
+    parser.add_argument("--menu", action="store_true", help="Add original switch sounds (native IWAD keeps both variants)")
+    parser.add_argument("--codec", choices=("rice", "ima"), default="rice",
+                        help="Native IWAD codec: exact PCM8/Rice (default) or legacy lossy IMA")
     args = parser.parse_args()
     input_path = args.whx or args.wad
     data = input_path.read_bytes()
-    extract = extract_whx if args.whx else extract_wad
-    sounds = extract(data, SOUNDS + ((b"DSSWTCHN",) if args.menu else ()))
+    if args.whx:
+        sounds = extract_whx(data, SOUNDS + ((b"DSSWTCHN",) if args.menu else ()))
+    else:
+        sounds = extract_wad(data, SOUNDS + ((b"DSSWTCHN", b"DSSWTCHX") if args.menu else ()),
+                             args.codec, optional=(b"DSNOWAY",))
     source = emit_source(sounds)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     (args.output_dir / "fm1_doom_sound_bank.c").write_bytes(source.encode("utf-8"))
     (args.output_dir / "fm1_doom_sound_bank_ref.h").write_text(emit_reference(sounds), encoding="utf-8")
     manifest = {
         "source": str(input_path.resolve()), "source_sha256": hashlib.sha256(data).hexdigest(),
-        "payload_bytes": sum(len(raw) for _, raw in sounds),
+        "payload_bytes": sum(len(raw) for raw in set(raw for _, raw in sounds)),
+        "entry_bytes_before_deduplication": sum(len(raw) for _, raw in sounds),
         "generated_source_sha256": hashlib.sha256(source.encode()).hexdigest(),
         "sounds": [{"name": name.decode(), "bytes": len(raw),
                     "sha256": hashlib.sha256(raw).hexdigest(),
-                    "rate": struct.unpack_from("<H", raw, 2)[0]}
+                    "rate": struct.unpack_from("<H", raw, 2)[0],
+                    "decoded_samples": len(reference_pcm(raw)),
+                    "decoded_pcm16_fnv": pcm_fnv(reference_pcm(raw))}
                    for name, raw in sounds],
     }
     if args.wad:
-        manifest.update(source_format="IWAD_PCM8", ima_padding_max_samples=7)
+        manifest.update(source_format="IWAD_PCM8", codec="PCM8_RICE" if args.codec == "rice" else "IMA",
+                        lossless=args.codec == "rice", decoded_matches_original_pcm8=args.codec == "rice",
+                        rice_max_bits_per_sample=15 if args.codec == "rice" else None,
+                        ima_padding_max_samples=0 if args.codec == "rice" else 7)
     (args.output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(f"{len(sounds)} original shareware SFX: {manifest['payload_bytes']} XIP bytes")
 

@@ -8,9 +8,11 @@
 
 typedef struct {
     char output[8192];
-    unsigned used, stop_requests, arm_calls;
+    unsigned used, stop_requests, arm_calls, frame_ends, frame_reads;
     int stopped, drained, arm_result;
     struct fm1_doom_usb_status status;
+    struct fm1_doom_usb_game game;
+    fm1_doom_usb_frame_control frame;
 } fake_usb;
 
 static void capture(void *context, const char *text)
@@ -38,6 +40,35 @@ static int boot_arm(void *context)
     return fake->arm_result;
 }
 
+static void get_game(void *context, struct fm1_doom_usb_game *game)
+{ *game = ((fake_usb *)context)->game; }
+static int frame_begin(void *context, uint32_t now)
+{
+    fake_usb *fake = context;
+    if (fake->status.stage != 4 || fake->stopped || fake->stop_requests) return -1;
+    return fm1_doom_usb_frame_control_begin(&fake->frame, now);
+}
+static void frame_info(void *context, fm1_doom_usb_frame_control *frame)
+{ *frame = ((fake_usb *)context)->frame; }
+static size_t frame_read(void *context, uint32_t offset, uint8_t *out, size_t capacity)
+{
+    fake_usb *fake = context;
+    size_t i;
+    ++fake->frame_reads;
+    if (fake->frame.state != 2 || offset >= FM1_DOOM_USB_FRAME_BYTES) return 0;
+    if (capacity > FM1_DOOM_USB_FRAME_BYTES - offset)
+        capacity = FM1_DOOM_USB_FRAME_BYTES - offset;
+    for (i = 0; i < capacity; ++i) out[i] = (uint8_t)(offset + i);
+    return capacity;
+}
+static void frame_end(void *context)
+{
+    fake_usb *fake = context;
+    ++fake->frame_ends; fake->frame.state = 0;
+}
+static void frame_tick(void *context, uint32_t now)
+{ fm1_doom_usb_frame_control_tick(&((fake_usb *)context)->frame, now); }
+
 static void feed(fm1_doom_usb_protocol *protocol, const char *text, uint32_t now,
                  const fm1_doom_usb_protocol_io *io)
 {
@@ -49,7 +80,8 @@ int main(void)
     fake_usb fake = {0};
     fm1_doom_usb_protocol protocol;
     const fm1_doom_usb_protocol_io io = {
-        &fake, capture, get_status, request_stop, is_stopped, tx_drained, boot_arm
+        &fake, capture, get_status, request_stop, is_stopped, tx_drained, boot_arm,
+        get_game, frame_begin, frame_info, frame_read, frame_end, frame_tick
     };
     char overflow[FM1_DOOM_USB_LINE_BYTES + 16u];
     unsigned i;
@@ -135,14 +167,85 @@ int main(void)
     fake.status.music_voices = 8;
     fake.status.usb_stack_words = 500;
     fake.status.max_audio_irq_us = 1000;
+    fake.status.volume_raw = 1023;
+    fake.status.volume_gain = 127;
+    fake.status.volume_valid = 1;
+    fake.status.volume_errors = UINT32_MAX;
+    fake.status.synth_mode = 1;
     feed(&protocol, "DOOM AU", 220, &io);
     CHECK(!fake.used);
     feed(&protocol, "DIO\n", 221, &io);
     CHECK(!strcmp(fake.output,
-          "DOOM AUDIO ready=1 error=-42 irqs=4294967295 frames=4294967295 sfx_started=4294967295 sfx_voices=2 music_playing=1 music_ticks=4294967295 music_events=4294967295 music_loops=4294967295 music_steals=4294967295 music_errors=4294967295 music_voices=8 usb_stack_words=500 max_irq_us=1000\n"));
-    CHECK(fake.used < 350 && !fake.stop_requests && !fake.arm_calls);
+          "DOOM AUDIO ready=1 error=-42 irqs=4294967295 frames=4294967295 sfx_started=4294967295 sfx_voices=2 music_playing=1 music_ticks=4294967295 music_events=4294967295 music_loops=4294967295 music_steals=4294967295 music_errors=4294967295 music_voices=8 usb_stack_words=500 max_irq_us=1000 volume_raw=1023 volume_gain=127 volume_valid=1 volume_errors=4294967295 synth_mode=1\n"));
+    CHECK(fake.used < 510 && !fake.stop_requests && !fake.arm_calls);
     feed(&protocol, "DOOM AUDIO\r\n", 222, &io);
     CHECK(strstr(fake.output, "ERR LINE ABORTED\n"));
+
+    memset(&fake, 0, sizeof(fake));
+    fake.game.stage = 4; fake.game.tic = 123; fake.game.state = 0;
+    fake.game.skill = 2; fake.game.x = -65536; fake.game.y = 131072;
+    fake.game.angle = UINT32_MAX; fake.game.health = 97;
+    fake.game.bullets = 43; fake.game.shells = 4; fake.game.weapon = 1;
+    fake.game.total_kills = 6; fake.game.kills = 1; fake.game.sector = 3;
+    fake.game.things = 138; fake.game.vertexes = 467; fake.game.lines = 475;
+    fake.game.sides = 648; fake.game.sectors = 85; fake.game.segs = 732;
+    fake.game.subsectors = 237; fake.game.nodes = 236;
+    fake.game.menu = 0; fake.game.coarse = 1;
+    feed(&protocol, "DOOM GAME\n", 230, &io);
+    CHECK(!strcmp(fake.output,
+          "DOOM GAME stage=4 tic=123 state=0 skill=2 x=-65536 y=131072 angle=4294967295 health=97 bullets=43 shells=4 weapon=1 total=6 killed=1 sector=3 things=138 vertexes=467 lines=475 sides=648 sectors=85 segs=732 subsectors=237 nodes=236 menu=0 coarse=1\n"));
+    CHECK(!fake.stop_requests && !fake.arm_calls && !fake.frame_reads);
+
+    memset(&fake, 0, sizeof(fake));
+    feed(&protocol, "DOOM FRAME BEGIN\n", 231, &io);
+    CHECK(!strcmp(fake.output, "ERR FRAME_UNAVAILABLE\n"));
+    CHECK(!fake.frame.state);
+    fake.status.stage = 4;
+    fake.used = 0; fake.output[0] = 0;
+    feed(&protocol, "DOOM FRAME BEGIN\nDOOM FRAMEINFO\n", 232, &io);
+    CHECK(!strcmp(fake.output,
+          "OK DOOM FRAME REQUESTED\nDOOM FRAMEINFO state=1 ready=0 id=1 width=160 height=100 bytes=16512 coarse=0 menu=0\n"));
+    CHECK(fake.frame.started_ms == 232);
+    feed(&protocol, "DOOM FRAME BEGIN\nDOOM FRAME READ 0\n", 233, &io);
+    CHECK(strstr(fake.output, "ERR FRAME_BUSY\nERR FRAME_NOT_READY\n"));
+    CHECK(!fake.frame_reads && fake.frame.started_ms == 232);
+    fake.frame.state = 2; fake.frame.coarse = 1;
+    fake.used = 0; fake.output[0] = 0;
+    feed(&protocol, "DOOM FRAME READ 0\n", 234, &io);
+    CHECK(!strcmp(fake.output,
+          "DOOM FRAME id=1 offset=0 bytes=96 data=000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F202122232425262728292A2B2C2D2E2F303132333435363738393A3B3C3D3E3F404142434445464748494A4B4C4D4E4F505152535455565758595A5B5C5D5E5F\n"));
+    CHECK(fake.frame_reads == 1 && !fake.stop_requests && !fake.arm_calls);
+    fake.used = 0; fake.output[0] = 0;
+    feed(&protocol, "DOOM FRAME READ 16511\n", 235, &io);
+    CHECK(!strcmp(fake.output, "DOOM FRAME id=1 offset=16511 bytes=1 data=7F\n"));
+    feed(&protocol, "DOOM FRAME READ 16512\nDOOM FRAME READ -1\nDOOM FRAME READ 0x10\nDOOM FRAME READ 0 \nDOOM FRAME READ 42949672960\nDOOM FRAME READ \n", 236, &io);
+    CHECK(fake.frame_reads == 2);
+    CHECK(strstr(fake.output, "ERR FRAME_OFFSET\nERR FRAME_OFFSET\nERR FRAME_OFFSET\nERR FRAME_OFFSET\nERR FRAME_OFFSET\nERR FRAME_OFFSET\n"));
+    feed(&protocol, "DOOM FRAME END\nDOOM FRAME READ 0\n", 237, &io);
+    CHECK(!fake.frame.state && fake.frame_ends == 1);
+    CHECK(strstr(fake.output, "OK DOOM FRAME END\nERR FRAME_NOT_READY\n"));
+    CHECK(fake.frame_reads == 2);
+
+    memset(&fake, 0, sizeof(fake));
+    fake.status.stage = 4;
+    feed(&protocol, "DOOM FRAME BEGIN\n", UINT32_MAX - 10000u, &io);
+    fake.frame.state = 2;
+    fm1_doom_usb_protocol_tick(&protocol, 4998u, &io);
+    CHECK(fake.frame.state == 2);
+    fm1_doom_usb_protocol_tick(&protocol, 4999u, &io);
+    CHECK(fake.frame.state == 0); /* hard deadline survives clock wrap */
+    feed(&protocol, "DOOM FRAME READ 0\nDOOM FRAME BEGIN\n", 5000u, &io);
+    CHECK(strstr(fake.output, "ERR FRAME_NOT_READY\nOK DOOM FRAME REQUESTED\n"));
+    CHECK(fake.frame.id == 2);
+    fake.frame.state = 2;
+    feed(&protocol, "DOOM FRAME READ ", 5001u, &io);
+    fm1_doom_usb_protocol_tick(&protocol, 15001u, &io);
+    CHECK(!protocol.used && !fake.frame.state && fake.frame_ends == 1);
+    CHECK(strstr(fake.output, "ERR TIMEOUT ABORTED\n"));
+    feed(&protocol, "DOOM FRAME BEGIN\nDOOM STOP\n", 15002u, &io);
+    CHECK(fake.stop_requests == 1 && !fake.frame.state && fake.frame_ends == 2);
+    feed(&protocol, "DOOM FRAME BEGIN\n", 15003u, &io);
+    CHECK(strstr(fake.output, "OK DOOM STOP REQUESTED\nERR FRAME_UNAVAILABLE\n"));
 
     memset(&fake, 0, sizeof(fake));
     feed(&protocol, "DOOM STOP\n", 300, &io);
@@ -225,6 +328,6 @@ int main(void)
     CHECK(fake.used && fake.output[fake.used - 1u] == '\n');
     feed(&protocol, "UBOOT\n", 17000u, &io);
     CHECK(fake.arm_calls == 1);
-    puts("FM-1 Doom USB framing, status, trace, STOP and serial UBOOT contract passed");
+    puts("FM-1 Doom USB framing, GAME/FRAME bounds, timeout, STOP and serial UBOOT contract passed");
     return 0;
 }

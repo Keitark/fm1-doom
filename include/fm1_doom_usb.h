@@ -21,12 +21,42 @@ struct fm1_doom_usb_status {
     uint32_t music_playing, music_ticks, music_events, music_loops;
     uint32_t music_steals, music_errors, music_voices, usb_stack_words;
     uint32_t max_audio_irq_us;
+    uint32_t volume_raw, volume_gain, volume_valid, volume_errors;
+    uint32_t synth_mode;
 };
 
 void fm1_doom_usb_get_status(struct fm1_doom_usb_status *status);
 void fm1_doom_usb_request_stop(void);
 int fm1_doom_usb_is_stopped(void);
 void fm1_doom_usb_task(void *argument);
+
+struct fm1_doom_usb_game {
+    uint32_t stage, tic, angle;
+    int state, skill, health, bullets, shells, weapon, total_kills, kills;
+    int32_t x, y;
+    int sector, things, vertexes, lines, sides, sectors, segs, subsectors, nodes;
+    uint32_t menu, coarse;
+};
+
+#define FM1_DOOM_USB_FRAME_WIDTH 160u
+#define FM1_DOOM_USB_FRAME_HEIGHT 100u
+#define FM1_DOOM_USB_FRAME_PIXELS 16000u
+#define FM1_DOOM_USB_FRAME_BYTES 16512u
+#define FM1_DOOM_USB_FRAME_CHUNK 96u
+#define FM1_DOOM_USB_FRAME_TIMEOUT_MS 15000u
+/* State: 0=idle, 1=requested, 2=held between completed engine ticks. */
+typedef struct {
+    uint32_t state, id, started_ms, coarse, menu;
+} fm1_doom_usb_frame_control;
+
+int fm1_doom_usb_frame_control_begin(fm1_doom_usb_frame_control *frame, uint32_t now_ms);
+void fm1_doom_usb_frame_control_tick(fm1_doom_usb_frame_control *frame, uint32_t now_ms);
+void fm1_doom_usb_get_game(struct fm1_doom_usb_game *game);
+int fm1_doom_usb_frame_begin(uint32_t now_ms);
+void fm1_doom_usb_frame_info(fm1_doom_usb_frame_control *frame);
+size_t fm1_doom_usb_frame_read(uint32_t offset, uint8_t *out, size_t capacity);
+void fm1_doom_usb_frame_end(void);
+void fm1_doom_usb_frame_tick(uint32_t now_ms);
 
 #define FM1_DOOM_USB_LINE_BYTES 64u
 #define FM1_DOOM_USB_FRAGMENT_TIMEOUT_MS 10000u
@@ -45,6 +75,12 @@ typedef struct {
     int (*is_stopped)(void *context);
     int (*tx_drained)(void *context);
     int (*boot_arm)(void *context);
+    void (*get_game)(void *context, struct fm1_doom_usb_game *game);
+    int (*frame_begin)(void *context, uint32_t now_ms);
+    void (*frame_info)(void *context, fm1_doom_usb_frame_control *frame);
+    size_t (*frame_read)(void *context, uint32_t offset, uint8_t *out, size_t capacity);
+    void (*frame_end)(void *context);
+    void (*frame_tick)(void *context, uint32_t now_ms);
 } fm1_doom_usb_protocol_io;
 
 void fm1_doom_usb_protocol_reset(fm1_doom_usb_protocol *protocol);

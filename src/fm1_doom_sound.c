@@ -1,5 +1,5 @@
 /* Bounded two-voice shareware SFX output using the working NES I2S route.
- * Generated ADPCM samples stay in XIP flash; no FMD/cache work occurs in IRQs. */
+ * Exact PCM8/Rice or legacy IMA stays in XIP; no FMD/cache work occurs in IRQs. */
 #ifdef FM1_DOOM_SOUND_TEST
 #include "fake_sound_sdk.h"
 #else
@@ -12,6 +12,7 @@
 #include "fm1_doom_sound.h"
 #include "fm1_doom_music.h"
 #include "fm1_board.h"
+#include "fm1_volume.h"
 #include <string.h>
 
 /* IMA ADPCM tables. The private WHX bank uses 128-byte blocks: signed-16
@@ -44,6 +45,73 @@ static void block_start(fm1_doom_sound_voice *voice)
     voice->next += 4;
 }
 
+static void rice_block_start(fm1_doom_sound_voice *voice)
+{
+    /* Each 256-sample block begins with an unsigned PCM8 predictor and k.
+     * The whole immutable stream is validated before this state is used. */
+    voice->predictor = ((int32_t)voice->next[0] - 128) * 256;
+    voice->index = voice->next[1];
+    voice->next += 2;
+    voice->high = 0;
+    voice->block_left = (uint16_t)((voice->samples_left < 256u
+                                  ? voice->samples_left : 256u) - 1u);
+}
+
+static unsigned rice_bit(fm1_doom_sound_voice *voice)
+{
+    unsigned value = (*voice->next >> voice->high) & 1u;
+    if (++voice->high == 8u) { ++voice->next; voice->high = 0; }
+    return value;
+}
+
+static unsigned rice_delta(fm1_doom_sound_voice *voice)
+{
+    unsigned quotient = 0, value, count, i;
+    /* Seven one bits escape to an 8-bit zigzag delta. Normal codes have
+     * at most 6 unary bits, one zero and k<=7 remainder bits: <=15 total. */
+    while (quotient < 7u && rice_bit(voice)) ++quotient;
+    count = quotient == 7u ? 8u : voice->index;
+    value = quotient == 7u ? 0u : quotient << voice->index;
+    for (i = 0; i < count; ++i) value |= rice_bit(voice) << i;
+    return value;
+}
+
+static int validate_rice(const uint8_t *data, size_t bytes, uint32_t declared)
+{
+    fm1_doom_sound_voice checked;
+    uint32_t remaining = declared;
+    memset(&checked, 0, sizeof(checked));
+    checked.next = data + 8;
+    checked.end = data + bytes;
+    while (remaining) {
+        unsigned samples = remaining < 256u ? remaining : 256u, i;
+        if ((size_t)(checked.end - checked.next) < 2u || checked.next[1] > 7u) return -1;
+        checked.index = checked.next[1]; checked.next += 2; checked.high = 0;
+        for (i = 1; i < samples; ++i) {
+            unsigned quotient = 0, value, count, bit;
+            do {
+                if (checked.next == checked.end) return -1;
+                bit = rice_bit(&checked);
+                if (!bit) break;
+            } while (++quotient < 7u);
+            count = quotient == 7u ? 8u : checked.index;
+            value = quotient == 7u ? 0u : quotient << checked.index;
+            for (bit = 0; bit < count; ++bit) {
+                if (checked.next == checked.end) return -1;
+                value |= rice_bit(&checked) << bit;
+            }
+            if (value > 255u) return -1;
+        }
+        /* Padding aligns the next predictor; reject hidden/trailing data. */
+        if (checked.high) {
+            if ((*checked.next >> checked.high) != 0u) return -1;
+            ++checked.next;
+        }
+        remaining -= samples;
+    }
+    return checked.next == checked.end ? 0 : -1;
+}
+
 int fm1_doom_sound_voice_start(fm1_doom_sound_voice *voice,
                               const uint8_t *data, size_t bytes)
 {
@@ -51,24 +119,33 @@ int fm1_doom_sound_voice_start(fm1_doom_sound_voice *voice,
     uint32_t rate, declared;
     if (!voice) return -1;
     memset(voice, 0, sizeof(*voice));
-    if (!data || bytes < 12u || data[0] != 3u || data[1] != 128u) return -1;
+    if (!data || bytes < 8u || data[0] != 3u ||
+        (data[1] != 128u && data[1] != 129u)) return -1;
     rate = le16(data + 2);
     declared = le16(data + 4) | le16(data + 6) << 16;
     if ((rate != 8000u && rate != 11025u) || !declared || declared > 1000000u) return -1;
-    /* Validate every block before publishing a voice to the IRQ. */
-    for (offset = 8; offset < bytes;) {
-        size_t block = bytes - offset;
-        if (block > 128u) block = 128u;
-        if (block < 4u || (block - 4u) % 4u ||
-            data[offset + 2u] > 88u || data[offset + 3u]) return -1;
-        offset += block;
+    if (data[1] == 129u) {
+        if (validate_rice(data, bytes, declared)) return -1;
+        voice->encoding = 1;
+        voice->samples_left = declared;
+    } else {
+        if (bytes < 12u) return -1;
+        /* Preserve legacy WHX IMA's bounded padded final block. */
+        for (offset = 8; offset < bytes;) {
+            size_t block = bytes - offset;
+            if (block > 128u) block = 128u;
+            if (block < 4u || (block - 4u) % 4u ||
+                data[offset + 2u] > 88u || data[offset + 3u]) return -1;
+            offset += block;
+        }
     }
     voice->next = data + 8;
     voice->end = data + bytes;
     voice->step = (rate << 16) / FM1_DOOM_SOUND_OUTPUT_RATE;
     voice->left = voice->right = 127;
     voice->playing = 1;
-    block_start(voice);
+    if (voice->encoding) rice_block_start(voice);
+    else block_start(voice);
     return 0;
 }
 
@@ -76,6 +153,27 @@ static void advance(fm1_doom_sound_voice *voice)
 {
     unsigned nibble;
     int32_t step, delta, index;
+    if (voice->encoding) {
+        unsigned value;
+        int32_t signed_delta, sample;
+        if (!--voice->samples_left) {
+            if (voice->high) { ++voice->next; voice->high = 0; }
+            voice->playing = 0;
+            return;
+        }
+        if (!voice->block_left) {
+            if (voice->high) ++voice->next; /* next block is byte-aligned */
+            rice_block_start(voice);
+            return;
+        }
+        value = rice_delta(voice);
+        signed_delta = (int32_t)(value >> 1);
+        if (value & 1u) signed_delta = -signed_delta - 1;
+        sample = (int32_t)((uint32_t)(voice->predictor / 256 + 128 + signed_delta) & 255u);
+        voice->predictor = (sample - 128) * 256;
+        --voice->block_left;
+        return;
+    }
     if (!voice->block_left) {
         if (voice->next == voice->end) { voice->playing = 0; return; }
         block_start(voice);
@@ -110,22 +208,23 @@ void fm1_doom_sound_mix(fm1_doom_sound_voice voices[FM1_DOOM_SOUND_VOICES],
         int16_t music_left, music_right;
         int32_t left, right;
         fm1_doom_music_sample_stereo(&music_left, &music_right);
-        left = (int32_t)music_left * 128;
-        right = (int32_t)music_right * 128;
+        left = (int32_t)music_left * 256;
+        right = (int32_t)music_right * 256;
         for (channel = 0; channel < FM1_DOOM_SOUND_VOICES; ++channel) {
             fm1_doom_sound_voice *voice = &voices[channel];
             if (!voice->playing) continue;
-            left += voice->predictor * voice->left;
-            right += voice->predictor * voice->right;
+            left += voice->predictor * voice->left * FM1_DOOM_SOUND_EFFECT_PCM24_GAIN;
+            right += voice->predictor * voice->right * FM1_DOOM_SOUND_EFFECT_PCM24_GAIN;
             voice->phase += voice->step;
             if (voice->phase >= 65536u) {
                 voice->phase -= 65536u;
                 advance(voice);
             }
         }
-        /* Q7 volume and signed-16 -> signed-24 scaling combine to *2. */
-        stereo[2u * i] = clip24(left * 2);
-        stereo[2u * i + 1u] = clip24(right * 2);
+        /* Original PCM16 is untouched. Effects now use half the initial Q7
+         * output gain; music and the physical master gain are independent. */
+        stereo[2u * i] = clip24(left);
+        stereo[2u * i + 1u] = clip24(right);
     }
 }
 
@@ -135,6 +234,8 @@ volatile uint32_t fm1_doom_sound_irqs, fm1_doom_sound_frames;
 volatile uint32_t fm1_doom_sound_started;
 static fm1_doom_sound_voice voices[FM1_DOOM_SOUND_VOICES];
 static fm1_audio_startup envelope;
+static fm1_volume master_volume;
+static uint32_t volume_phase;
 static struct iis_platform_data audio_pd; /* SDK retains this pointer. */
 static spinlock_t audio_lock;
 static unsigned audio_opened, audio_enabled, audio_irq_registered;
@@ -157,6 +258,13 @@ static void release(unsigned flags)
 unsigned fm1_doom_sound_lock(void) { return take(); }
 void fm1_doom_sound_unlock(unsigned flags) { release(flags); }
 
+void fm1_doom_sound_toggle_music_mode(void)
+{
+    unsigned flags = take();
+    fm1_doom_music_toggle_synth_mode();
+    release(flags);
+}
+
 int fm1_doom_sound_is_ready(void)
 {
     unsigned flags = take();
@@ -175,6 +283,11 @@ void fm1_doom_sound_get_diagnostics(fm1_doom_sound_diagnostics *diagnostics)
     diagnostics->output_frames = fm1_doom_sound_frames;
     diagnostics->sfx_started = fm1_doom_sound_started;
     diagnostics->max_irq_us = max_irq_us;
+    diagnostics->volume_raw = master_volume.raw;
+    diagnostics->volume_gain = envelope.gain_q7;
+    diagnostics->volume_valid = master_volume.valid;
+    diagnostics->volume_errors = master_volume.errors;
+    diagnostics->synth_mode = fm1_doom_music_get_synth_mode();
     diagnostics->active_voices = 0;
     for (i = 0; i < FM1_DOOM_SOUND_VOICES; ++i)
         if (voices[i].playing) ++diagnostics->active_voices;
@@ -189,6 +302,14 @@ static void output(void *unused, u8 *data, int len, u8 channel)
         return;
     }
     fm1_doom_sound_mix(voices, (int32_t *)data);
+    /* Existing PB6/ADC4 knob driver is nonblocking. A 64-frame DMA callback
+     * gives 1.45/2.90 ms intervals averaging 2 ms, rather than an extra IRQ. */
+    volume_phase += 64000u;
+    if (volume_phase >= 88200u) {
+        volume_phase -= 88200u;
+        fm1_volume_tick(&master_volume);
+    }
+    envelope.target_q7 = master_volume.valid ? master_volume.target : 0;
     fm1_audio_startup_process24(&envelope, (int32_t *)data);
     fm1_doom_sound_frames += 64u;
 }
@@ -216,6 +337,9 @@ void fm1_doom_sound_shutdown(void)
     audio_enabled = 0;
     memset(voices, 0, sizeof(voices));
     fm1_doom_music_stop_locked();
+    fm1_volume_stop(&master_volume);
+    envelope.gain_q7 = 0;
+    envelope.target_q7 = 0;
     release(flags);
     if (audio_irq_registered) {
         unrequest_irq(IRQ_ALNK_IDX, 0);
@@ -251,8 +375,19 @@ int fm1_doom_sound_init(void)
     audio_pd.sr_points = 128;
     memset(voices, 0, sizeof(voices));
     fm1_audio_startup_reset(&envelope);
+    envelope.target_q7 = 0;
+    volume_phase = 0;
+    flags = take();
+    /* ADC ownership/conversion errors are separate diagnostics and fail
+     * muted; IIS keeps running so the fault can be observed over USB. */
+    fm1_volume_start(&master_volume);
+    release(flags);
     rc = iis_open(&audio_pd, 0);
-    if (rc) { fm1_doom_sound_error = rc; return rc; }
+    if (rc) {
+        fm1_doom_sound_error = rc;
+        fm1_doom_sound_shutdown();
+        return rc;
+    }
     audio_opened = 1;
     iis_set_dec_data_handler(0, output, 0);
     rc = iis_set_sample_rate(FM1_DOOM_SOUND_OUTPUT_RATE, 0);
@@ -281,10 +416,21 @@ static const fm1_doom_sound_entry *lookup(sfxinfo_t *sfx)
         sfx = sfx->link;
     }
     name = sfx->name;
-    if (!strcmp(name, "noway")) name = "oof";
-    if (!strcmp(name, "swtchx")) name = "swtchn";
     for (i = 0; i < fm1_doom_sound_entry_count; ++i)
         if (!strcmp(name, fm1_doom_sound_entries[i].name)) return &fm1_doom_sound_entries[i];
+    /* Compatibility for legacy three-sound WHX banks. Native banks can supply
+     * exact distinct samples and always take precedence over these fallbacks. */
+    if (!strcmp(name, "noway")) name = "oof";
+    else if (!strcmp(name, "swtchx")) name = "swtchn";
+    else return 0;
+    for (i = 0; i < fm1_doom_sound_entry_count; ++i)
+        if (!strcmp(name, fm1_doom_sound_entries[i].name)) {
+            /* The switch fallback is only for legacy WHX banks; native
+             * PCM8 banks must supply the distinct original exit switch. */
+            if (!strcmp(sfx->name, "swtchx") &&
+                fm1_doom_sound_entries[i].data[1] != 128u) return 0;
+            return &fm1_doom_sound_entries[i];
+        }
     return 0;
 }
 

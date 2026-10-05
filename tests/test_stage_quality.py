@@ -1,10 +1,14 @@
 import struct
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from stage_wad import Lump, MAP_LUMPS, omit_direct_boot_ui, pixelate_flat, pixelate_patch, prune_graphics
+from stage_wad import (Lump, MAP_LUMPS, compact_assets, omit_direct_boot_ui,
+                       patch_columns, pixelate_flat, pixelate_patch,
+                       prune_graphics, read_wad, share_patch_columns,
+                       validate_compact_assets, write_wad)
 
 
 def patch():
@@ -84,6 +88,123 @@ class StageQualityTests(unittest.TestCase):
         self.assertEqual(by_name[b"PISGA0"], pixelate_patch(patch(), 2))
         self.assertEqual(by_name[b"TROOA1"], patch())
         self.assertEqual(by_name[b"M_DOOM"], patch())
+
+
+def multi_post_patch():
+    # Two separated posts retain top offsets, lengths, pixels and both padding
+    # bytes. Columns 0/1 are byte-identical but originally stored separately.
+    first = bytes((0, 2, 7, 10, 11, 8, 5, 2, 9, 12, 13, 6, 255))
+    last = bytes((1, 3, 4, 20, 21, 22, 5, 255))
+    return struct.pack("<hhhhIII", 3, 8, -2, 4, 20, 33, 46) + first + first + last
+
+
+class CompactAssetTests(unittest.TestCase):
+    def test_column_sharing_preserves_all_posts_and_patch_geometry(self):
+        original = multi_post_patch()
+        result = share_patch_columns(original)
+        self.assertEqual(patch_columns(result), patch_columns(original))
+        self.assertEqual(result[:8], original[:8])
+        offsets = struct.unpack_from("<III", result, 8)
+        self.assertEqual(offsets[0], offsets[1])
+        self.assertNotEqual(offsets[1], offsets[2])
+        self.assertEqual(len(original) - len(result), 13)
+
+    def test_compaction_remaps_pnames_and_keeps_all_names_and_menu_pixels(self):
+        original = complete_fixture()
+        table = next(l.data for l in original if l.name == b"TEXTURE1")
+        table = bytearray(table)
+        struct.pack_into("<H", table, 8 + 26, 1)
+        original = [Lump(l.name, bytes(table)) if l.name == b"TEXTURE1"
+                    else Lump(l.name, struct.pack("<I8s8s8s", 3, b"UNUSED0", b"WALLPIC", b"UNUSED2"))
+                    if l.name == b"PNAMES"
+                    else Lump(l.name, multi_post_patch()) if l.name == b"M_DOOM"
+                    else l for l in original]
+        # An unused patch remains addressable by its existing logical name.
+        end = next(i for i,l in enumerate(original) if l.name == b"P_END")
+        original.insert(end, Lump(b"UNUSED0", multi_post_patch()))
+        result = compact_assets(original)
+        validate_compact_assets(original, result)
+        self.assertEqual([l.name for l in result], [l.name for l in original])
+        by_name = {l.name:l.data for l in result}
+        self.assertEqual(by_name[b"PNAMES"], struct.pack("<I8s", 1, b"WALLPIC"))
+        self.assertEqual(struct.unpack_from("<H", by_name[b"TEXTURE1"], 8 + 26)[0], 0)
+        self.assertEqual(patch_columns(by_name[b"M_DOOM"]), patch_columns(multi_post_patch()))
+        self.assertIn(b"UNUSED0", by_name)
+        for before, after in zip(original, result):
+            if before.name in MAP_LUMPS or before.name in (b"FLAT1", b"E1M1"):
+                self.assertEqual(before, after)
+
+    def test_pnames_closure_includes_texture2(self):
+        original = complete_fixture()
+        table = bytearray(next(l.data for l in original if l.name == b"TEXTURE1"))
+        struct.pack_into("<H", table, 8 + 26, 1)
+        original = [Lump(l.name, struct.pack("<I8s8s", 2, b"WALLPIC", b"SECOND"))
+                    if l.name == b"PNAMES" else l for l in original]
+        original.append(Lump(b"TEXTURE2", bytes(table)))
+        result = compact_assets(original)
+        validate_compact_assets(original, result)
+        self.assertEqual(next(l.data for l in result if l.name == b"PNAMES"),
+                         struct.pack("<I8s8s", 2, b"WALLPIC", b"SECOND"))
+
+    def test_shared_payload_offsets_preserve_logical_reader_results(self):
+        original = complete_fixture()
+        compacted = compact_assets(original)
+        with tempfile.TemporaryDirectory() as directory:
+            plain = Path(directory)/"plain.wad"
+            shared = Path(directory)/"shared.wad"
+            write_wad(plain, compacted)
+            write_wad(shared, compacted, share_payloads=True)
+            self.assertEqual(read_wad(plain), compacted)
+            self.assertEqual(read_wad(shared), compacted)
+            self.assertLess(shared.stat().st_size, plain.stat().st_size)
+            data = shared.read_bytes()
+            _,count,start = struct.unpack_from("<4sII", data)
+            records = {name.rstrip(b"\0"):pos for pos,size,name in
+                       (struct.unpack_from("<II8s",data,start+16*i) for i in range(count))}
+            self.assertEqual(records[b"PISGA0"], records[b"TROOA1"])
+
+    def test_malformed_column_bounds_and_missing_terminator_are_rejected(self):
+        source = multi_post_patch()
+        bad_offset = bytearray(source)
+        struct.pack_into("<I", bad_offset, 8, len(source))
+        bad_header = bytearray(source)
+        struct.pack_into("<I", bad_header, 8, 0)
+        bad_count = bytearray(source)
+        bad_count[21] = 255
+        for data in (b"", source[:19], bytes(bad_offset), bytes(bad_header),
+                     bytes(bad_count), source[:-1]):
+            with self.subTest(data=data):
+                with self.assertRaises(ValueError):
+                    share_patch_columns(data)
+
+    def test_invalid_texture_and_pnames_tables_are_rejected(self):
+        original = complete_fixture()
+        bad_index = bytearray(next(l.data for l in original if l.name == b"TEXTURE1"))
+        struct.pack_into("<H", bad_index, 8 + 26, 1)
+        for name,data in ((b"PNAMES",b""),
+                          (b"PNAMES",struct.pack("<I",2)+b"WALLPIC\0"),
+                          (b"TEXTURE1",struct.pack("<II",1,0)),
+                          (b"TEXTURE1",bytes(bad_index))):
+            with self.subTest(name=name,data=data):
+                fixture=[Lump(l.name,data) if l.name == name else l for l in original]
+                with self.assertRaises(ValueError):
+                    compact_assets(fixture)
+
+    def test_validator_rejects_changed_pixels_geometry_and_map_bytes(self):
+        original = complete_fixture()
+        result = compact_assets(original)
+        for name,index in ((b"M_DOOM",27),(b"WALLPIC",27),
+                           (b"M_DOOM",4),(b"THINGS",0)):
+            altered=[]
+            for lump in result:
+                if lump.name == name:
+                    data=bytearray(lump.data)
+                    data[index] ^= 1
+                    lump=Lump(lump.name,bytes(data))
+                altered.append(lump)
+            with self.subTest(name=name):
+                with self.assertRaises(ValueError):
+                    validate_compact_assets(original,altered)
 
 
 if __name__ == "__main__":

@@ -27,6 +27,13 @@ and effects. A 105-second Detailed-mode capture has zero reported errors,
 successful music looping and about 10.9 counter increments/s. Instrument
 quality and mix balance are being checked; the 30 FPS target remains open.
 See [audio](AUDIO.md).
+The next source revision adds the PB6 master volume knob, lossless original
+PCM effects, DOS OPL2 music and an E4 switch for the requested VCO/VCF/VCA
+melody treatment. Effects and synth-mode drums are 6 dB quieter. Its local
+app is 554,800 B with 477,912 B static RAM and 4,096 B of reviewed startup
+reserve; physical installation and timing checks are pending.
+USB position/frame diagnostics can inspect the device display with
+`python tools/capture_usb_frame.py --port COM6` after that revision is installed.
 The private `build/target-candidate/app.bin` is the verified plain input for a
 WL82 UBOOT flow accepting SDK `-app app.bin`; see [target candidate](TARGET_CANDIDATE.md)
 for its exact format and limits.
@@ -107,17 +114,31 @@ allocation. This test does not account for SDK, stack, or screen RAM.
 For the current direct E1M1 first stage, use the generated 160×100 engine:
 
 ```powershell
-python tools/stage_wad.py C:\path\to\doom1.wad build\stage-menu-ui.wad --map E1M1 --silent --prune-graphics --prune-sprites --no-attract-art --no-ui --menu-ui --pixelate 4 --weapon-pixelate 1 --fist-pixelate 2
+python tools/stage_wad.py C:\path\to\doom1.wad build\stage-menu-ui.wad --map E1M1 --silent --prune-graphics --prune-sprites --no-attract-art --no-ui --menu-ui --pixelate 4 --weapon-pixelate 1 --fist-pixelate 2 --compact-assets
 python tools/pack_archive.py build\stage-menu-ui.wad build\menu-ui-4k.fmd --block-size 4096
 ```
 
 This retains original menu images and pistol art while reducing the four fist
-frames to leave room for audio. The resulting WAD is 582,735 B and its
-4 KiB block FMD1 archive is 177,331 B on the tested shareware input.
+frames to leave room for audio. Lossless patch-column/payload sharing and
+texture patch-index compaction preserve decoded graphics and all map lumps.
+The resulting WAD is 552,294 B and its 4 KiB FMD1 archive is 170,505 B on the
+tested input. Without `--compact-assets`, the prior 582,735 B/177,331 B profile
+is reproduced.
 Generate the separate sound/music banks with the commands in [AUDIO.md](AUDIO.md)
 before building the audio target. The zero-length music marker remains in the
 WAD; playback uses the separate immutable score.
 `LOW_MEMORY_EXPERIMENT.md` has the exact build and run commands.
+
+### Leaving the spawn area
+
+The complete original E1M1 geometry is retained. Walking straight from spawn
+reaches a normal wall; the opening is to the right. Turn right with A3, move
+with G-sharp3, then turn left with F3 into the corridor. Turn right farther
+along toward the first door and press F5 once nearby. Release F5 before using
+another door. Holding USE continuously does not activate later doors, and
+repeated presses can reverse an opening door. D-sharp4 enables the clearer
+view. A 296 KiB host route crosses the first door and reaches active enemies;
+whole-level physical traversal remains unverified.
 
 With the clean pinned SDK and toolchain from the existing
 [FM-1 board project](https://github.com/Keitark/fm1-tracker), check pi32v2

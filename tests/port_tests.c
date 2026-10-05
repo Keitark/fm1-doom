@@ -7,6 +7,8 @@
 
 static uint64_t keys;
 static unsigned calls;
+static unsigned music_toggles;
+static void toggle_music(void *u) { ++*(unsigned *)u; }
 static uint16_t first, last, center, block_edge, next_block;
 static uint64_t read_keys(void *u) { (void)u; return keys; }
 static uint32_t ticks(void *u) { (void)u; return 123u; }
@@ -172,6 +174,36 @@ static int test_presentation_toggle(void)
     return 0;
 }
 
+static int test_music_toggle(void)
+{
+    fm1_doom_port port;
+    fm1_doom_io io = {&music_toggles, read_keys, rows, ticks, sleep_ms};
+    const uint64_t toggle = UINT64_C(1) << 25;
+    int pressed = 7;
+    uint8_t key = 41;
+    unsigned i;
+    io.toggle_music_mode = toggle_music;
+    keys = 0; music_toggles = 0;
+    CHECK(fm1_doom_port_init(&port, &io) == 0);
+    keys = toggle | (UINT64_C(1) << 17) | (UINT64_C(1) << 40);
+    CHECK(fm1_doom_next_key(&port, &pressed, &key) && pressed && key == KEY_UPARROW);
+    CHECK(music_toggles == 1);
+    CHECK(fm1_doom_next_key(&port, &pressed, &key) && pressed && key == KEY_FIRE);
+    for (i = 0; i < 5; ++i) CHECK(!fm1_doom_next_key(&port, &pressed, &key));
+    CHECK(music_toggles == 1);
+    keys = 0;
+    CHECK(fm1_doom_next_key(&port, &pressed, &key) && !pressed && key == KEY_UPARROW);
+    CHECK(fm1_doom_next_key(&port, &pressed, &key) && !pressed && key == KEY_FIRE);
+    CHECK(!fm1_doom_next_key(&port, &pressed, &key) && music_toggles == 1);
+    keys = toggle;
+    CHECK(!fm1_doom_next_key(&port, &pressed, &key) && music_toggles == 2);
+    io.toggle_music_mode = NULL;
+    CHECK(fm1_doom_port_init(&port, &io) == 0);
+    CHECK(!fm1_doom_next_key(&port, &pressed, &key));
+    CHECK(music_toggles == 2);
+    return 0;
+}
+
 int main(void)
 {
     fm1_doom_port port;
@@ -232,6 +264,7 @@ int main(void)
     }
     CHECK(test_present_reference() == 0);
     CHECK(test_presentation_toggle() == 0);
+    CHECK(test_music_toggle() == 0);
     puts("FM-1 palette, both gameplay modes, image menu and simultaneous key/toggle edges passed");
     return 0;
 }

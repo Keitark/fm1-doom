@@ -26,6 +26,10 @@
 #include "fm1_doom_sound.h"
 #include "fm1_doom_music.h"
 #include "doomgeneric.h"
+#include "doomstat.h"
+#include "i_video.h"
+#include "r_state.h"
+#include "w_wad.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -53,6 +57,10 @@ volatile int fm1_doom_fault;
 volatile int fm1_doom_key_error;
 char fm1_doom_error_message[256];
 static volatile unsigned stop_requested, stopped;
+static spinlock_t frame_lock;
+static fm1_doom_usb_frame_control frame_capture;
+static struct fm1_doom_usb_game game_snapshot = {.state = -1, .skill = -1, .sector = -1};
+static int map_things;
 static fm1_wl82_keyscan scanner;
 static spinlock_t input_lock;
 static unsigned input_irq_enabled, input_irq_registered, input_retries;
@@ -119,6 +127,11 @@ void fm1_doom_usb_get_status(struct fm1_doom_usb_status *status)
     status->sfx_started = sound.sfx_started;
     status->sfx_voices = sound.active_voices;
     status->max_audio_irq_us = sound.max_irq_us;
+    status->volume_raw = sound.volume_raw;
+    status->volume_gain = sound.volume_gain;
+    status->volume_valid = sound.volume_valid;
+    status->volume_errors = sound.volume_errors;
+    status->synth_mode = sound.synth_mode;
     status->music_ticks = music.ticks;
     status->music_events = music.events;
     status->music_loops = music.loops;
@@ -129,7 +142,134 @@ void fm1_doom_usb_get_status(struct fm1_doom_usb_status *status)
     status->usb_stack_words = uxTaskGetStackHighWaterMark(NULL);
 }
 
-void fm1_doom_usb_request_stop(void) { stop_requested = 1; }
+static unsigned frame_take(void)
+{
+    unsigned flags;
+    local_irq_save(flags);
+    arch_spin_lock(&frame_lock);
+    return flags;
+}
+
+static void frame_release(unsigned flags)
+{
+    arch_spin_unlock(&frame_lock);
+    local_irq_restore(flags);
+}
+
+void fm1_doom_usb_get_game(struct fm1_doom_usb_game *game)
+{
+    unsigned flags = frame_take();
+    *game = game_snapshot;
+    game->stage = fm1_doom_stage;
+    frame_release(flags);
+}
+
+int fm1_doom_usb_frame_begin(uint32_t now_ms)
+{
+    unsigned flags = frame_take();
+    int result = -1;
+    if (fm1_doom_stage == 4 && !stop_requested && !fm1_doom_fault
+        && I_VideoBuffer && fm1_doom_active_port())
+        result = fm1_doom_usb_frame_control_begin(&frame_capture, now_ms);
+    frame_release(flags);
+    return result;
+}
+
+void fm1_doom_usb_frame_info(fm1_doom_usb_frame_control *frame)
+{
+    unsigned flags = frame_take();
+    *frame = frame_capture;
+    frame_release(flags);
+}
+
+void fm1_doom_usb_frame_tick(uint32_t now_ms)
+{
+    unsigned flags = frame_take();
+    fm1_doom_usb_frame_control_tick(&frame_capture, now_ms);
+    frame_release(flags);
+}
+
+void fm1_doom_usb_frame_end(void)
+{
+    unsigned flags = frame_take();
+    frame_capture.state = 0;
+    frame_release(flags);
+}
+
+size_t fm1_doom_usb_frame_read(uint32_t offset, uint8_t *out, size_t capacity)
+{
+    unsigned flags = frame_take();
+    size_t count = 0;
+    fm1_doom_port *port = fm1_doom_active_port();
+    if (frame_capture.state == 2 && !stop_requested && I_VideoBuffer && port
+        && offset < FM1_DOOM_USB_FRAME_BYTES && out) {
+        if (capacity > FM1_DOOM_USB_FRAME_CHUNK) capacity = FM1_DOOM_USB_FRAME_CHUNK;
+        if (capacity > FM1_DOOM_USB_FRAME_BYTES - offset)
+            capacity = FM1_DOOM_USB_FRAME_BYTES - offset;
+        for (count = 0; count < capacity; ++count, ++offset) {
+            if (offset < FM1_DOOM_USB_FRAME_PIXELS) out[count] = I_VideoBuffer[offset];
+            else {
+                unsigned index = offset - FM1_DOOM_USB_FRAME_PIXELS;
+                /* Palette follows indexed pixels as 256 little-endian RGB565 words. */
+                out[count] = (uint8_t)(port->palette[index >> 1] >> ((index & 1u) * 8u));
+            }
+        }
+    }
+    frame_release(flags);
+    return count;
+}
+
+/* Only the Doom task reads engine objects; USB receives a completed-tick
+   scalar snapshot. No traversal, archive read or allocation is needed. */
+static void update_game_snapshot(void)
+{
+    struct fm1_doom_usb_game game = {0};
+    player_t *player = &players[consoleplayer];
+    fm1_doom_port *port = fm1_doom_active_port();
+    unsigned flags;
+    game.tic = gametic;
+    game.state = gamestate; game.skill = gameskill;
+    game.health = player->health;
+    game.bullets = player->ammo[am_clip]; game.shells = player->ammo[am_shell];
+    game.weapon = player->readyweapon; game.kills = player->killcount;
+    game.total_kills = totalkills; game.sector = -1;
+    if (player->mo) {
+        game.x = player->mo->x; game.y = player->mo->y;
+        game.angle = player->mo->angle;
+        if (player->mo->subsector && player->mo->subsector->sector && sectors)
+            game.sector = player->mo->subsector->sector - sectors;
+    }
+    game.things = map_things; game.vertexes = numvertexes;
+    game.lines = numlines; game.sides = numsides; game.sectors = numsectors;
+    game.segs = numsegs; game.subsectors = numsubsectors; game.nodes = numnodes;
+    if (port) { game.menu = port->menu_visible; game.coarse = port->coarse_gameplay; }
+    flags = frame_take();
+    game_snapshot = game;
+    frame_release(flags);
+}
+
+static void capture_between_ticks(void)
+{
+    for (;;) {
+        unsigned flags = frame_take();
+        unsigned held;
+        fm1_doom_usb_frame_control_tick(&frame_capture, timer_get_ms());
+        if (stop_requested || fm1_doom_fault) frame_capture.state = 0;
+        if (frame_capture.state == 1) {
+            frame_capture.coarse = game_snapshot.coarse;
+            frame_capture.menu = game_snapshot.menu;
+            frame_capture.state = 2;
+        }
+        held = frame_capture.state == 2;
+        frame_release(flags);
+        if (!held) return;
+        wdt_clear();
+        os_time_dly(1);
+    }
+}
+
+void fm1_doom_usb_request_stop(void)
+{ stop_requested = 1; fm1_doom_usb_frame_end(); }
 int fm1_doom_usb_is_stopped(void) { return stopped != 0; }
 
 void __attribute__((noreturn)) fm1_doom_target_fatal(const char *format, va_list args)
@@ -137,6 +277,7 @@ void __attribute__((noreturn)) fm1_doom_target_fatal(const char *format, va_list
     vsnprintf(fm1_doom_error_message, sizeof(fm1_doom_error_message), format, args);
     if (!fm1_doom_fault) fm1_doom_fault = -30;
     fm1_doom_stage = 0xff;
+    fm1_doom_usb_frame_end();
     fm1_doom_sound_shutdown();
     trace_phase = 5;
     scan_stop();
@@ -292,6 +433,12 @@ static uint64_t read_keys(void *unused)
     return bits;
 }
 
+static void toggle_music_mode(void *unused)
+{
+    (void)unused;
+    fm1_doom_sound_toggle_music_mode();
+}
+
 static int write_rows(void *unused, unsigned y, unsigned rows, const uint8_t *pixels)
 {
     uint32_t now;
@@ -359,22 +506,29 @@ static void fm1_doom_task(void *unused)
     input_good_at = timer_get_ms();
     if (rc) input_failed(rc, input_good_at);
     io.strip_buffer = fm1_display_strip_buffer(&io.strip_buffer_bytes);
+    io.toggle_music_mode = toggle_music_mode;
     fm1_doom_set_wad_archive("doom1.wad", &archive);
     if (fm1_doom_bind_io(&io)) { fm1_doom_fault = -12; goto failed_keys; }
     if (stop_requested) goto failed_keys;
     fm1_doom_stage = 3;
     doomgeneric_Create(8, argv);
+    map_things = W_LumpLength(W_GetNumForName("THINGS")) / 10;
+    update_game_snapshot();
     fm1_doom_stage = 4;
     while (!fm1_doom_fault && !stop_requested) {
+        capture_between_ticks();
+        if (fm1_doom_fault || stop_requested) break;
         ++trace_tick_entered;
         trace_phase = 1;
         doomgeneric_Tick();
         ++trace_tick_completed;
+        update_game_snapshot();
         trace_phase = 4;
         wdt_clear();
         os_time_dly(0);
     }
 failed_keys:
+    fm1_doom_usb_frame_end();
     fm1_doom_sound_shutdown();
     scan_stop();
 failed_display:

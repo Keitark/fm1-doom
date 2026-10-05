@@ -3,7 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Heapless 44.1 kHz, 8-voice integer score synthesizer. All low-level calls
+/* Heapless DOS Doom OPL2 music with nine hardware voices at 44.1 kHz output.
+ * All low-level calls
  * must share the sound backend's audio lock; sample functions never lock.
  * Game-data score bytes are provided separately from ignored build/music-bank. */
 int fm1_doom_music_set_score(const uint8_t *score, size_t length);
@@ -11,6 +12,11 @@ int fm1_doom_music_start(int loop);
 void fm1_doom_music_stop_locked(void);
 void fm1_doom_music_pause(int paused);
 void fm1_doom_music_set_volume(unsigned volume);
+/* Caller holds the sound lock. Mode0: original DOS OPL2; mode1: melodic
+ * VCO/VCF/VCA treatment with original OPL drums. Mode1 is the default. */
+void fm1_doom_music_set_synth_mode(unsigned mode);
+unsigned fm1_doom_music_get_synth_mode(void);
+void fm1_doom_music_toggle_synth_mode(void);
 int fm1_doom_music_is_playing(void);
 int32_t fm1_doom_music_sample(void);
 void fm1_doom_music_sample_stereo(int16_t *left, int16_t *right);

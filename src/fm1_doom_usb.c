@@ -57,13 +57,27 @@ static int boot_arm(void *context)
     return fm1_usb_boot_arm();
 }
 
+static void get_game(void *context, struct fm1_doom_usb_game *game)
+{ (void)context; fm1_doom_usb_get_game(game); }
+static int frame_begin(void *context, uint32_t now)
+{ (void)context; return fm1_doom_usb_frame_begin(now); }
+static void frame_info(void *context, fm1_doom_usb_frame_control *frame)
+{ (void)context; fm1_doom_usb_frame_info(frame); }
+static size_t frame_read(void *context, uint32_t offset, uint8_t *out, size_t capacity)
+{ (void)context; return fm1_doom_usb_frame_read(offset, out, capacity); }
+static void frame_end(void *context)
+{ (void)context; fm1_doom_usb_frame_end(); }
+static void frame_tick(void *context, uint32_t now)
+{ (void)context; fm1_doom_usb_frame_tick(now); }
+
 void __attribute__((noinline, used)) fm1_doom_usb_task(void *argument)
 {
     uint8_t rx[64], output[63];
     unsigned generation = 0, i, length;
     uint32_t last = 0;
     const fm1_doom_usb_protocol_io io = {
-        0, reply, get_status, request_stop, is_stopped, tx_drained, boot_arm
+        0, reply, get_status, request_stop, is_stopped, tx_drained, boot_arm,
+        get_game, frame_begin, frame_info, frame_read, frame_end, frame_tick
     };
     (void)argument;
     fm1_doom_usb_stage = 1;
@@ -78,18 +92,21 @@ void __attribute__((noinline, used)) fm1_doom_usb_task(void *argument)
         ++fm1_doom_usb_heartbeat;
         if (generation != fm1_cdc_generation || !fm1_cdc_ready(FM1_USB_CONTROLLER)) {
             generation = fm1_cdc_generation;
+            fm1_doom_usb_frame_end();
             fm1_doom_usb_protocol_reset(&protocol);
             tx_read = tx_write = 0;
             last = now - 1000u;
         }
         if (fm1_cdc_ready(FM1_USB_CONTROLLER)) {
             if (fm1_usb_rx_fault()) {
+                fm1_doom_usb_frame_end();
                 fm1_doom_usb_protocol_reset(&protocol);
                 tx_read = tx_write = 0;
                 reply(0, "ERR RX_OR_UBOOT_ABORTED\n");
             }
             length = cdc_read_data(FM1_USB_CONTROLLER, rx, sizeof(rx));
             if (generation != fm1_usb_rx_generation()) {
+                fm1_doom_usb_frame_end();
                 generation = fm1_usb_rx_generation();
                 fm1_doom_usb_protocol_reset(&protocol);
                 tx_read = tx_write = 0;

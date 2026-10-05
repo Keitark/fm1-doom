@@ -2,6 +2,7 @@
 #include "fm1_doom_music.h"
 #include "fake_sound_sdk.h"
 #include "fm1_doom_sound_bank_ref.h"
+#include "fm1_volume.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,6 +20,37 @@ static void (*irq_handler)(void);
 static int32_t dma[128];
 static int16_t music_left, music_right;
 static uint32_t half_msec, callback_half_msec;
+static unsigned volume_starts, volume_stops, volume_ticks;
+static int volume_fail_start, volume_fail_tick;
+static uint16_t volume_raw = 1023;
+static unsigned synth_mode = 1;
+
+void fm1_doom_music_toggle_synth_mode(void) { REQUIRE(locked); synth_mode ^= 1u; }
+unsigned fm1_doom_music_get_synth_mode(void) { REQUIRE(locked); return synth_mode; }
+
+int fm1_volume_start(fm1_volume *state)
+{
+    REQUIRE(locked);
+    memset(state,0,sizeof(*state));
+    ++volume_starts;
+    if(volume_fail_start){state->errors=1;return -1;}
+    state->running=1;
+    return 0;
+}
+void fm1_volume_stop(fm1_volume *state)
+{
+    REQUIRE(locked);
+    if(state->running)++volume_stops;
+    state->running=state->valid=state->target=0;
+}
+void fm1_volume_tick(fm1_volume *state)
+{
+    REQUIRE(locked);
+    ++volume_ticks;
+    if(!state->running)return;
+    if(volume_fail_tick){++state->errors;state->running=state->valid=state->target=0;return;}
+    ++state->samples;state->raw=volume_raw;state->valid=1;state->target=(uint8_t)(volume_raw>>3);
+}
 
 void fm1_doom_music_sample_stereo(int16_t *left, int16_t *right)
 {
@@ -77,7 +109,7 @@ static void test_decoder(void)
     REQUIRE(!fm1_doom_sound_voice_start(&voices[0],fixture,sizeof(fixture)));
     fm1_doom_sound_mix(voices,pcm);
     for (i=0;i<sizeof(expected)/sizeof(expected[0]);++i)
-        REQUIRE(pcm[i*8u] == expected[i]*254 && pcm[i*8u+1u] == expected[i]*254);
+        REQUIRE(pcm[i*8u] == expected[i]*127 && pcm[i*8u+1u] == expected[i]*127);
     REQUIRE(!voices[0].playing);
     for (i=72;i<128;++i) REQUIRE(pcm[i] == 0);
     for (i=1;i<=3;++i) {
@@ -100,16 +132,86 @@ static void test_decoder(void)
     fixture[2]=17; fixture[3]=43; fixture[8]=255; fixture[9]=127;
     REQUIRE(!fm1_doom_sound_voice_start(&voices[0],fixture,sizeof(fixture)));
     REQUIRE(!fm1_doom_sound_voice_start(&voices[1],fixture,sizeof(fixture)));
+    music_left=music_right=8191;
     fm1_doom_sound_mix(voices,pcm);
     REQUIRE(pcm[0] == 8388607 && pcm[1] == 8388607);
     fixture[8]=0; fixture[9]=128;
     REQUIRE(!fm1_doom_sound_voice_start(&voices[0],fixture,sizeof(fixture)));
     REQUIRE(!fm1_doom_sound_voice_start(&voices[1],fixture,sizeof(fixture)));
+    music_left=music_right=-8192;
     fm1_doom_sound_mix(voices,pcm);
     REQUIRE(pcm[0] == -8388608 && pcm[1] == -8388608);
     memset(voices,0,sizeof(voices)); music_left=8191; music_right=-8192;
     fm1_doom_sound_mix(voices,pcm);
     REQUIRE(pcm[0] == 8191*256 && pcm[1] == -8192*256);
+    music_left=music_right=0;
+}
+
+static void test_rice_decoder(void)
+{
+    uint8_t escaped[]={3,129,17,43,2,0,0,0,0,0,255,127};
+    uint8_t blocks[44]={3,129,17,43,1,1,0,0};
+    uint8_t invalid[20];
+    fm1_doom_sound_voice voices[2]={{0}};
+    int32_t pcm[128];
+    unsigned i,block;
+    REQUIRE(!fm1_doom_sound_voice_start(&voices[0],escaped,sizeof(escaped)));
+    REQUIRE(voices[0].encoding && voices[0].samples_left==2);
+    fm1_doom_sound_mix(voices,pcm);
+    for(i=0;i<8;i++)REQUIRE(pcm[i]==-32768*127);
+    for(i=8;i<128;i++)REQUIRE(pcm[i]==0);
+    REQUIRE(!voices[0].playing && !voices[0].samples_left && voices[0].next==voices[0].end);
+    for(i=0;i<sizeof(escaped);i++){
+        REQUIRE(fm1_doom_sound_voice_start(&voices[0],escaped,i));
+        REQUIRE(!voices[0].playing);
+    }
+    memcpy(invalid,escaped,sizeof(escaped));invalid[9]=8;
+    REQUIRE(fm1_doom_sound_voice_start(&voices[0],invalid,sizeof(escaped)));
+    memcpy(invalid,escaped,sizeof(escaped));invalid[11]=255;
+    REQUIRE(fm1_doom_sound_voice_start(&voices[0],invalid,sizeof(escaped)));
+    memcpy(invalid,escaped,sizeof(escaped));invalid[12]=0;
+    REQUIRE(fm1_doom_sound_voice_start(&voices[0],invalid,sizeof(escaped)+1));
+    memcpy(invalid,escaped,sizeof(escaped));invalid[4]=0;
+    REQUIRE(fm1_doom_sound_voice_start(&voices[0],invalid,sizeof(escaped)));
+    memcpy(invalid,escaped,sizeof(escaped));invalid[4]=4;
+    REQUIRE(fm1_doom_sound_voice_start(&voices[0],invalid,sizeof(escaped)));
+    memcpy(invalid,escaped,sizeof(escaped));invalid[9]=7;invalid[10]=63;invalid[11]=0;
+    REQUIRE(fm1_doom_sound_voice_start(&voices[0],invalid,sizeof(escaped)));
+    blocks[8]=144;blocks[42]=192; /*256 constant samples, then one distinct sample.*/
+    REQUIRE(!fm1_doom_sound_voice_start(&voices[0],blocks,sizeof(blocks)));
+    for(block=0;block<16;block++){
+        fm1_doom_sound_mix(voices,pcm);
+        for(i=0;i<128;i++)REQUIRE(pcm[i]==4096*127);
+    }
+    REQUIRE(voices[0].playing && voices[0].samples_left==1);
+    fm1_doom_sound_mix(voices,pcm);
+    for(i=0;i<8;i++)REQUIRE(pcm[i]==16384*127);
+    for(i=8;i<128;i++)REQUIRE(!pcm[i]);
+    REQUIRE(!voices[0].playing && !voices[0].samples_left && voices[0].next==voices[0].end);
+    /* Both source rates obey exact count despite non-integral output phase. */
+    blocks[2]=64;blocks[3]=31;
+    REQUIRE(!fm1_doom_sound_voice_start(&voices[0],blocks,sizeof(blocks)));
+    REQUIRE(voices[0].step==11888);
+    for(block=0;voices[0].playing && block<30;block++)fm1_doom_sound_mix(voices,pcm);
+    REQUIRE(!voices[0].playing && !voices[0].samples_left && voices[0].next==voices[0].end);
+    blocks[43]=8;
+    REQUIRE(fm1_doom_sound_voice_start(&voices[0],blocks,sizeof(blocks)));
+}
+
+static void test_effect_gain_and_music_independence(void)
+{
+    const uint8_t one_sample[]={3,129,17,43,1,0,0,0,129,0};
+    fm1_doom_sound_voice voices[2]={{0}};
+    int32_t pcm[128];unsigned i;
+    REQUIRE(!fm1_doom_sound_voice_start(&voices[0],one_sample,sizeof(one_sample)));
+    music_left=300;music_right=-400;
+    fm1_doom_sound_mix(voices,pcm);
+    for(i=0;i<64;i++) {
+        int32_t effect=i<4?256*127:0;
+        /* FX gain1 instead of2 is exactly half; music stays PCM16*256. */
+        REQUIRE(pcm[2*i]==300*256+effect);
+        REQUIRE(pcm[2*i+1]==-400*256+effect);
+    }
     music_left=music_right=0;
 }
 
@@ -140,7 +242,7 @@ static void test_private_bank_reference(void)
             for (i=0;i<64;++i,++frames) {
                 uint32_t sample=(uint32_t)((uint64_t)frames*voices[0].step/65536u);
                 if (sample<sound_reference[sound].samples && sample!=previous) {
-                    int16_t value=(int16_t)(pcm[2*i]/254);
+                    int16_t value=(int16_t)(pcm[2*i]/127);
                     fnv=(fnv^(uint8_t)value)*16777619u;
                     fnv=(fnv^(uint8_t)((uint16_t)value>>8))*16777619u;
                     previous=sample; ++count;
@@ -150,16 +252,23 @@ static void test_private_bank_reference(void)
         REQUIRE(count == sound_reference[sound].samples);
         REQUIRE(fnv == sound_reference[sound].fnv);
         REQUIRE(voices[0].next == voices[0].end);
+        if(entry->data[1]==129u) {
+            REQUIRE(!voices[0].samples_left);
+            REQUIRE(sound_reference[sound].samples==
+                    ((uint32_t)entry->data[4]|(uint32_t)entry->data[5]<<8|
+                     (uint32_t)entry->data[6]<<16|(uint32_t)entry->data[7]<<24));
+        }
     }
 }
 
 static void test_module(void)
 {
-    sfxinfo_t pistol={0}, missing={0}, linked={0}, alias={0};
-    unsigned i, closed;
+    sfxinfo_t pistol={0}, missing={0}, linked={0}, alias={0}, swtchn={0}, swtchx={0};
+    unsigned i, closed, ticks_before, stops_before;
     fm1_doom_sound_diagnostics status;
     strcpy(pistol.name,"pistol"); strcpy(missing.name,"shotgn");
     strcpy(linked.name,"chgun"); linked.link=&pistol; strcpy(alias.name,"noway");
+    strcpy(swtchn.name,"swtchn");strcpy(swtchx.name,"swtchx");
     fm1_doom_sound_shutdown(); /* Safe before first init and on repeated stop. */
     REQUIRE(!opens && !closes && !registered && !fm1_doom_sound_is_ready());
     status=diagnostics();
@@ -173,10 +282,20 @@ static void test_module(void)
     fail_rate=0;
     REQUIRE(fm1_sound_module.Init(true) && snd_channels == 2);
     REQUIRE(fm1_doom_sound_is_ready());
+    status=diagnostics();REQUIRE(status.synth_mode==1);
+    fm1_doom_sound_toggle_music_mode();status=diagnostics();REQUIRE(status.synth_mode==0);
+    fm1_doom_sound_toggle_music_mode();status=diagnostics();REQUIRE(status.synth_mode==1);
     REQUIRE(retained_pd && retained_pd->sr_points == 128);
     REQUIRE(fm1_sound_module.GetSfxLumpNum(&pistol) > 0);
     REQUIRE(fm1_sound_module.GetSfxLumpNum(&linked) == fm1_sound_module.GetSfxLumpNum(&pistol));
     REQUIRE(fm1_sound_module.GetSfxLumpNum(&alias) > 0);
+    for(i=0;i<fm1_doom_sound_entry_count;i++) {
+        if(!strcmp(fm1_doom_sound_entries[i].name,"swtchx")) {
+            REQUIRE(fm1_sound_module.GetSfxLumpNum(&swtchx)==(int)i+1);
+            REQUIRE(fm1_sound_module.GetSfxLumpNum(&swtchn)>0);
+            REQUIRE(fm1_sound_module.GetSfxLumpNum(&swtchn)!=fm1_sound_module.GetSfxLumpNum(&swtchx));
+        }
+    }
     REQUIRE(fm1_sound_module.GetSfxLumpNum(&missing) == -1);
     REQUIRE(fm1_sound_module.GetSfxLumpNum(0) == -1);
     REQUIRE(fm1_sound_module.StartSound(&missing,0,127,127) == -1);
@@ -184,15 +303,18 @@ static void test_module(void)
     linked.link=&linked;
     REQUIRE(fm1_sound_module.GetSfxLumpNum(&linked) == -1);
     REQUIRE(fm1_sound_module.StartSound(&linked,0,127,127) == -1);
+    ticks_before=volume_ticks;
     for (i=0;i<690;++i) {
         irq_handler();
         REQUIRE(!dma[0] && !dma[127]);
     }
     REQUIRE(fm1_doom_sound_frames == 44160 && fm1_doom_sound_irqs == 690);
+    REQUIRE(volume_ticks-ticks_before==500u);
     status=diagnostics();
     REQUIRE(status.ready && !status.error && status.irq_count == 690 &&
             status.output_frames == 44160 && !status.sfx_started && !status.active_voices &&
             !status.max_irq_us);
+    REQUIRE(status.volume_raw==1023 && status.volume_valid && !status.volume_errors);
     REQUIRE(fm1_sound_module.StartSound(&pistol,0,127,127) == 0);
     REQUIRE(fm1_sound_module.SoundIsPlaying(0));
     callback_half_msec=1; irq_handler();
@@ -221,14 +343,46 @@ static void test_module(void)
     status=diagnostics(); REQUIRE(!status.ready && status.error == -42);
     fm1_sound_module.Update();
     REQUIRE(!registered && !fm1_sound_module.SoundIsPlaying(0));
+    /* A pre-existing ADC owner is reported and never stopped by this backend.
+     * Unvalidated knob input keeps startup muted while IIS remains observable. */
+    volume_fail_start=1;stops_before=volume_stops;
+    REQUIRE(!fm1_doom_sound_init());
+    REQUIRE(fm1_sound_module.StartSound(&pistol,0,127,127)==0);
+    for(i=0;i<710;i++){
+        irq_handler();
+        REQUIRE(!dma[0] && !dma[127]);
+    }
+    status=diagnostics();
+    REQUIRE(status.ready && !status.error && !status.volume_valid && !status.volume_gain && status.volume_errors==1);
+    fm1_doom_sound_shutdown();
+    REQUIRE(volume_stops==stops_before);
+    volume_fail_start=0;
+    REQUIRE(!fm1_doom_sound_init());
+    for(i=0;i<850;i++)irq_handler();
+    status=diagnostics();
+    REQUIRE(status.volume_valid && status.volume_gain==127 && !status.volume_errors);
+    volume_raw=0;
+    for(i=0;i<140;i++)irq_handler();
+    status=diagnostics();
+    REQUIRE(status.volume_valid && !status.volume_raw && !status.volume_gain);
+    volume_raw=1023;
+    for(i=0;i<140;i++)irq_handler();
+    status=diagnostics();REQUIRE(status.volume_gain==127);
+    volume_fail_tick=1;
+    for(i=0;i<140;i++)irq_handler();
+    status=diagnostics();
+    REQUIRE(status.ready && !status.error && !status.volume_valid && !status.volume_gain && status.volume_errors==1);
+    fm1_doom_sound_shutdown();volume_fail_tick=0;
     REQUIRE(!locked && !irq_disabled && stopped >= 3);
 }
 
 int main(void)
 {
     test_decoder();
+    test_rice_decoder();
+    test_effect_gain_and_music_independence();
     test_private_bank_reference();
     test_module();
-    puts("Doom SFX IMA/reference PCM, mixer, IIS route and shutdown contract passed");
+    puts("Doom SFX exact PCM8/Rice and legacy IMA, mixer, IIS/knob and shutdown contract passed");
     return 0;
 }

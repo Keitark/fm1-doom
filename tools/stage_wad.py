@@ -279,13 +279,186 @@ def prune_graphics(lumps: list[Lump], map_name: bytes, sprites: bool,
     return output
 
 
-def write_wad(path: Path, lumps: list[Lump]) -> int:
+def patch_columns(data: bytes) -> tuple[bytes, tuple[bytes, ...]]:
+    """Read bounded post streams, including padding, for each logical column."""
+    if len(data) < 8:
+        raise ValueError("Doom patch header is truncated")
+    width, height = struct.unpack_from("<hh", data)
+    if not 0 < width <= 1024 or not 0 < height <= 1024 or len(data) < 8 + width * 4:
+        raise ValueError("invalid Doom patch dimensions or column table")
+    columns = []
+    for start in struct.unpack_from("<" + "I" * width, data, 8):
+        pos = start
+        if pos < 8 + width * 4 or pos >= len(data):
+            raise ValueError("Doom patch column exceeds lump")
+        while data[pos] != 255:
+            if pos + 4 > len(data):
+                raise ValueError("truncated Doom patch post")
+            count = data[pos + 1]
+            if pos + 4 + count > len(data):
+                raise ValueError("Doom patch post exceeds lump")
+            pos += 4 + count
+            if pos >= len(data):
+                raise ValueError("Doom patch column lacks terminator")
+        columns.append(data[start:pos + 1])
+    return data[:8], tuple(columns)
+
+
+def share_patch_columns(data: bytes) -> bytes:
+    """Share byte-identical columns without changing any posts or pixels."""
+    header, columns = patch_columns(data)
+    result = bytearray(header + bytes(4 * len(columns)))
+    seen = {}
+    offsets = []
+    for column in columns:
+        if column not in seen:
+            seen[column] = len(result)
+            result.extend(column)
+        offsets.append(seen[column])
+    struct.pack_into("<" + "I" * len(offsets), result, 8, *offsets)
+    return bytes(result)
+
+
+def texture_records(data: bytes) -> list[bytes]:
+    if len(data) < 4:
+        raise ValueError("texture count is truncated")
+    count = struct.unpack_from("<I", data)[0]
+    if count > 10000 or len(data) < 4 + 4 * count:
+        raise ValueError("invalid texture directory")
+    records = []
+    for offset in struct.unpack_from("<" + "I" * count, data, 4):
+        if offset < 4 + 4 * count or offset + 22 > len(data):
+            raise ValueError("texture definition exceeds directory or lump")
+        patches = struct.unpack_from("<H", data, offset + 20)[0]
+        end = offset + 22 + 10 * patches
+        if patches > 32767 or end > len(data):
+            raise ValueError("texture patches exceed lump")
+        records.append(data[offset:end])
+    return records
+
+
+def pnames_records(data: bytes) -> list[bytes]:
+    if len(data) < 4:
+        raise ValueError("PNAMES count is truncated")
+    count = struct.unpack_from("<I", data)[0]
+    if count > 10000 or len(data) < 4 + 8 * count:
+        raise ValueError("invalid PNAMES")
+    return [data[4 + i * 8:12 + i * 8] for i in range(count)]
+
+
+def _graphic_lumps(lumps: list[Lump]) -> list[bool]:
+    selected = []
+    namespace = b""
+    for lump in lumps:
+        if lump.name in (b"S_START", b"P_START", b"F_START"):
+            namespace = lump.name[:1]
+        elif lump.name in (b"S_END", b"P_END", b"F_END"):
+            namespace = b""
+        selected.append(bool(lump.data) and (namespace in (b"S", b"P")
+                                            or lump.name.startswith(b"M_")))
+    return selected
+
+
+def _texture_semantics(data: bytes, names: list[bytes]) -> list[tuple]:
+    result = []
+    for record in texture_records(data):
+        patches = []
+        for i in range(struct.unpack_from("<H", record, 20)[0]):
+            patch = record[22 + i * 10:32 + i * 10]
+            index = struct.unpack_from("<H", patch, 4)[0]
+            if index >= len(names):
+                raise ValueError("texture references an invalid PNAMES index")
+            patches.append((patch[:4], names[index], patch[6:]))
+        result.append((record[:22], tuple(patches)))
+    return result
+
+
+def validate_compact_assets(before: list[Lump], after: list[Lump]) -> None:
+    """Prove ordered patches, resolved textures and all other lumps unchanged.
+
+    Equal headers and per-column post byte streams imply equal rendered patch
+    pixels, clipping geometry and texture composite columns. Resolved texture
+    names, patch origins, flags and ordering are compared rather than indices.
+    """
+    if [lump.name for lump in before] != [lump.name for lump in after]:
+        raise ValueError("compaction changed logical lump names or order")
+    old_by_name = {lump.name: lump.data for lump in before}
+    new_by_name = {lump.name: lump.data for lump in after}
+    old_names = pnames_records(old_by_name[b"PNAMES"])
+    new_names = pnames_records(new_by_name[b"PNAMES"])
+    for old, new, graphic in zip(before, after, _graphic_lumps(before)):
+        if old.name == b"PNAMES":
+            continue
+        if old.name in (b"TEXTURE1", b"TEXTURE2"):
+            if _texture_semantics(old.data, old_names) != _texture_semantics(new.data, new_names):
+                raise ValueError("compaction changed a resolved texture")
+        elif graphic:
+            if patch_columns(old.data) != patch_columns(new.data):
+                raise ValueError("compaction changed patch geometry, posts or pixels")
+        elif old != new:
+            raise ValueError("compaction changed a non-graphic lump")
+
+
+def compact_assets(lumps: list[Lump]) -> list[Lump]:
+    """Losslessly compact table indices and columns, retaining every lump."""
+    for name in (b"PNAMES", b"TEXTURE1", b"TEXTURE2"):
+        if sum(lump.name == name for lump in lumps) > 1:
+            raise ValueError("compaction requires unambiguous texture tables")
+    by_name = {lump.name: lump for lump in lumps}
+    if b"PNAMES" not in by_name or b"TEXTURE1" not in by_name:
+        raise ValueError("compaction requires PNAMES and TEXTURE1")
+    names = pnames_records(by_name[b"PNAMES"].data)
+    tables = {name: texture_records(by_name[name].data)
+              for name in (b"TEXTURE1", b"TEXTURE2") if name in by_name}
+    used = set()
+    for records in tables.values():
+        for record in records:
+            for i in range(struct.unpack_from("<H", record, 20)[0]):
+                index = struct.unpack_from("<H", record, 26 + i * 10)[0]
+                if index >= len(names):
+                    raise ValueError("texture references an invalid PNAMES index")
+                used.add(index)
+    used = sorted(used)
+    remap = {old: new for new, old in enumerate(used)}
+    replacement = {b"PNAMES": struct.pack("<I", len(used))
+                   + b"".join(names[index] for index in used)}
+    for name, records in tables.items():
+        packed = bytearray(struct.pack("<I", len(records)))
+        offset = 4 + 4 * len(records)
+        for record in records:
+            packed.extend(struct.pack("<I", offset))
+            offset += len(record)
+        for original in records:
+            record = bytearray(original)
+            for i in range(struct.unpack_from("<H", record, 20)[0]):
+                at = 26 + i * 10
+                struct.pack_into("<H", record, at, remap[struct.unpack_from("<H", record, at)[0]])
+            packed.extend(record)
+        replacement[name] = bytes(packed)
+    result = []
+    for lump, graphic in zip(lumps, _graphic_lumps(lumps)):
+        if lump.name in replacement:
+            lump = Lump(lump.name, replacement[lump.name])
+        elif graphic:
+            lump = Lump(lump.name, share_patch_columns(lump.data))
+        result.append(lump)
+    validate_compact_assets(lumps, result)
+    return result
+
+
+def write_wad(path: Path, lumps: list[Lump], share_payloads: bool = False) -> int:
     with path.open("wb") as out:
         out.write(b"\0" * 12)
         records = []
+        payloads = {}
         for lump in lumps:
-            pos = out.tell()
-            out.write(lump.data)
+            if share_payloads and lump.data in payloads:
+                pos = payloads[lump.data]
+            else:
+                pos = out.tell()
+                out.write(lump.data)
+                if share_payloads:
+                    payloads[lump.data] = pos
             records.append((pos, len(lump.data), lump.name))
         directory = out.tell()
         for pos, size, name in records:
@@ -319,6 +492,8 @@ def main() -> None:
                         help="Override pistol/fist view patch pixelation; defaults to --pixelate")
     parser.add_argument("--fist-pixelate", type=int, choices=(1, 2, 4, 8, 16),
                         help="Override fist art separately; retains the selected pistol detail")
+    parser.add_argument("--compact-assets", action="store_true",
+                        help="Losslessly share patch columns/payloads and compact PNAMES; retain all lump names")
     args = parser.parse_args()
     map_name = args.map.upper().encode("ascii")
     if not MAP.fullmatch(map_name):
@@ -343,7 +518,9 @@ def main() -> None:
     elif args.menu_ui:
         parser.error("--menu-ui requires --no-ui")
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    length = write_wad(args.output, stage)
+    if args.compact_assets:
+        stage = compact_assets(stage)
+    length = write_wad(args.output, stage, share_payloads=args.compact_assets)
     packed = len(zlib.compress(args.output.read_bytes(), 9))
     print(f"source={args.iwad.stat().st_size} bytes {len(source)} lumps")
     print(f"stage={length} bytes {len(stage)} lumps; zlib-9 estimate={packed} bytes")

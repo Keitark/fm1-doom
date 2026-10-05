@@ -1,29 +1,127 @@
 #include "fm1_doom_music.h"
+#include "fm1_doom_opl.h"
 #include <string.h>
 
-enum {VOICE_COUNT=8, SAMPLE_RATE=44100, TICK_FRAMES=315, STACK_SIZE=16, MAX_EVENTS_PER_TICK=128};
-typedef struct {
-    uint32_t phase, increment, age;
-    uint16_t envelope;
-    uint8_t note, channel, velocity, program, released, held;
-} voice;
-typedef struct {uint8_t program, volume, pan, wheel, sustain, expression;} channel;
+enum {TICK_FRAMES=315, STACK_SIZE=16, MAX_EVENTS_PER_TICK=128};
+extern const uint8_t fm1_doom_genmidi_bank[];
+extern const uint32_t fm1_doom_genmidi_bank_len;
 static struct {
     const uint8_t *bank, *nodes, *tokens;
     uint32_t raw_size, packed_size, position, raw_left, delay;
-    uint32_t ticks, events, loops, steals, errors, noise;
+    uint32_t ticks, events, loops, errors;
     uint8_t stack[STACK_SIZE], stack_count, node_count, playing, paused, looping, master;
     uint16_t sample_count;
-    voice voices[VOICE_COUNT];
-    channel channels[16];
 } music;
 
-/* Equal-tempered MIDI note phase increments at 44.1 kHz. */
-static const uint32_t increments[128]={
-796254u,843601u,893765u,946911u,1003217u,1062871u,1126073u,1193033u,1263974u,1339134u,1418763u,1503127u,1592507u,1687203u,1787529u,1893821u,2006434u,2125742u,2252146u,2386065u,2527948u,2678268u,2837526u,3006254u,3185015u,3374406u,3575058u,3787642u,4012867u,4251485u,4504291u,4772130u,5055896u,5356535u,5675051u,6012507u,6370030u,6748811u,7150117u,7575285u,8025735u,8502970u,9008582u,9544261u,10111792u,10713070u,11350103u,12025015u,12740059u,13497623u,14300233u,15150569u,16051469u,17005939u,18017165u,19088521u,20223584u,21426141u,22700205u,24050030u,25480119u,26995246u,28600467u,30301139u,32102938u,34011878u,36034330u,38177043u,40447168u,42852281u,45400411u,48100060u,50960238u,53990491u,57200933u,60602278u,64205876u,68023757u,72068660u,76354085u,80894335u,85704563u,90800821u,96200119u,101920476u,107980983u,114401866u,121204555u,128411753u,136047513u,144137319u,152708170u,161788671u,171409126u,181601643u,192400238u,203840952u,215961966u,228803732u,242409110u,256823506u,272095026u,288274639u,305416341u,323577341u,342818251u,363203285u,384800477u,407681904u,431923931u,457607465u,484818220u,513647012u,544190053u,576549277u,610832681u,647154683u,685636503u,726406571u,769600953u,815363807u,863847862u,915214929u,969636441u,1027294024u,1088380105u,1153098554u,1221665363u};
+enum {SYNTH_VOICES=8, ATTACK=0, DECAY=1, SUSTAIN=2, RELEASE=3};
+typedef struct {
+    uint32_t phase,detuned,increment;
+    uint16_t envelope;
+    uint8_t note,channel,velocity,state;
+} synth_voice;
+static struct {
+    synth_voice voices[SYNTH_VOICES];
+    struct {uint8_t program,volume,wheel;} channels[16];
+    struct {int32_t low,band;} filters[3];
+    uint16_t blend;
+} synth;
+static uint8_t synth_mode=1;
+/* C0..B0 phase increments at44.1kHz. Octaves are exact powers of two. */
+static const uint32_t synth_notes[12]={796254u,843601u,893765u,946911u,1003217u,1062871u,
+    1126073u,1193033u,1263974u,1339134u,1418763u,1503127u};
+
+static uint32_t synth_note(unsigned note){return synth_notes[note%12]<<(note/12);}
+static void synth_pitch(synth_voice *v)
+{
+    unsigned wheel=synth.channels[v->channel].wheel;
+    uint32_t base=synth_note(v->note),limit;
+    if(wheel>=128){limit=synth_note(v->note>125?127:v->note+2);v->increment=base+((limit-base)>>7)*(wheel-128);}
+    else{limit=synth_note(v->note<2?0:v->note-2);v->increment=base-((base-limit)>>7)*(128-wheel);}
+}
+static void synth_restart(void)
+{
+    unsigned i;for(i=0;i<16;i++){
+        synth.channels[i].program=0;synth.channels[i].volume=100;synth.channels[i].wheel=128;
+    }
+}
+static void synth_reset(void)
+{
+    memset(&synth,0,sizeof(synth));synth_restart();synth.blend=synth_mode?256:0;
+}
+static void synth_event(unsigned kind,unsigned ch,unsigned a,unsigned b)
+{
+    unsigned i,chosen=0,best=0xffffffffu;
+    if(ch==15)return;
+    if(kind==0 || (kind==1 && !b)){
+        for(i=0;i<SYNTH_VOICES;i++)if(synth.voices[i].channel==ch && synth.voices[i].note==a)
+            synth.voices[i].state=(uint8_t)((synth.voices[i].state&~3u)|RELEASE);
+    }else if(kind==1){
+        unsigned program=synth.channels[ch].program,group=program==29?0:program==30?1:2;
+        for(i=0;i<SYNTH_VOICES;i++){
+            synth_voice *v=&synth.voices[i];
+            unsigned priority=v->envelope;
+            if(!priority){chosen=i;break;}
+            if((v->state&3u)!=RELEASE)priority+=32768u;
+            if(priority<best){best=priority;chosen=i;}
+        }
+        synth.voices[chosen]=(synth_voice){0,0,0,1,(uint8_t)a,(uint8_t)ch,(uint8_t)b,(uint8_t)(group<<2)};
+        synth_pitch(&synth.voices[chosen]);
+    }else if(kind==2){
+        synth.channels[ch].wheel=(uint8_t)a;
+        for(i=0;i<SYNTH_VOICES;i++)if(synth.voices[i].envelope && synth.voices[i].channel==ch)synth_pitch(&synth.voices[i]);
+    }else if(kind==3){
+        if(a==10 || a==11 || a==13 || a==14)for(i=0;i<SYNTH_VOICES;i++)if(synth.voices[i].channel==ch)
+            synth.voices[i].state=(uint8_t)((synth.voices[i].state&~3u)|RELEASE);
+    }else if(kind==4){
+        if(!a)synth.channels[ch].program=(uint8_t)b;
+        else if(a==3)synth.channels[ch].volume=(uint8_t)b;
+    }
+}
+static int synth_triangle(uint32_t phase)
+{
+    unsigned p=phase>>20;return p<2048?(int)p-1024:3071-(int)p;
+}
+static int synth_bound(int value){return value>32767?32767:value<-32767?-32767:value;}
+static int synth_sample(void)
+{
+    int input[3]={0,0,0},output=0;unsigned envelopes[3]={0,0,0},i;
+    for(i=0;i<SYNTH_VOICES;i++){
+        synth_voice *v=&synth.voices[i];unsigned group=v->state>>2,stage=v->state&3u,sustain,level,step;
+        int wave,sample;
+        if(!v->envelope)continue;
+        if(stage==ATTACK){level=v->envelope+(group==0?96u:group==1?128u:80u);if(level>=32767){level=32767;v->state=(uint8_t)((group<<2)|DECAY);}v->envelope=(uint16_t)level;}
+        else if(stage==DECAY){sustain=group==0?12288u:group==1?8192u:16384u;step=((v->envelope-sustain)>>11)+1u;if(v->envelope<=sustain+step){v->envelope=(uint16_t)sustain;v->state=(uint8_t)((group<<2)|SUSTAIN);}else v->envelope=(uint16_t)(v->envelope-step);}
+        else if(stage==RELEASE){step=(v->envelope>>(group==2?11:10))+1u;v->envelope=(uint16_t)(v->envelope>step?v->envelope-step:0);}
+        v->phase+=v->increment;
+        v->detuned+=group==2?v->increment>>1:v->increment+(v->increment>>9);
+        /* Two VCOs: detuned saws for29; pulse/triangle for30; triangle and
+         * a sub-oscillator for bass34. Each is centered and bounded. */
+        if(group==0)wave=(((int)(v->phase>>20)-2048)+((int)(v->detuned>>20)-2048))/4;
+        else if(group==1)wave=(synth_triangle(v->phase)+(v->detuned<0x80000000u?1024:-1024))/2;
+        else wave=(synth_triangle(v->phase)+synth_triangle(v->detuned)/2)/2;
+        sample=(wave*(int)v->envelope)>>15;
+        sample=sample*(int)v->velocity/127;
+        sample=sample*(int)synth.channels[v->channel].volume/127;
+        input[group]+=sample;if(v->envelope>envelopes[group])envelopes[group]=v->envelope;
+    }
+    for(i=0;i<3;i++){
+        int low=synth.filters[i].low,band=synth.filters[i].band;
+        int coefficient=(i==2?2048:4096)+(int)(envelopes[i]>>(i==2?4:2));
+        int damping=i==2?28000:19661,high;
+        /* Q15 Chamberlin VCF: coefficient<=12287/32768, damping>=0.6.
+         * Its poles stay inside the unit circle; clamped state also bounds
+         * every32-bit intermediate even for eight full-scale held notes. */
+        low=synth_bound(low+((coefficient*band)>>15));
+        high=input[i]-low-((damping*band)>>15);
+        band=synth_bound(band+((coefficient*high)>>15));
+        if(!envelopes[i] && low>-32 && low<32 && band>-32 && band<32)low=band=0;
+        synth.filters[i].low=low;synth.filters[i].band=band;output+=low;
+    }
+    return output*(int)music.master/64;
+}
 
 static uint32_t le32(const uint8_t *p){return (uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
-static void fail(void){music.playing=0;++music.errors;memset(music.voices,0,sizeof(music.voices));}
+static void fail(void){music.playing=0;++music.errors;fm1_doom_opl_stop();}
 
 static int score_byte(uint8_t *output)
 {
@@ -59,12 +157,9 @@ static int next_delay(void)
 
 static void reset_stream(void)
 {
-    unsigned i;
     music.position=0;music.raw_left=music.raw_size;music.stack_count=0;music.sample_count=0;
-    memset(music.voices,0,sizeof(music.voices));
-    for(i=0;i<16;i++){
-        music.channels[i]=(channel){0,100,64,128,0,127};
-    }
+    fm1_doom_opl_restart();
+    synth_restart();
     if(!next_delay())fail();
 }
 
@@ -88,57 +183,29 @@ int fm1_doom_music_set_score(const uint8_t *score,size_t length)
     }
     music.bank=score;music.nodes=score+16;music.tokens=score+16+count*2u;
     music.raw_size=raw;music.packed_size=packed;music.node_count=(uint8_t)count;
-    music.master=80;music.noise=1;
-    music.ticks=music.events=music.loops=music.steals=music.errors=0;
+    if(fm1_doom_opl_set_bank(fm1_doom_genmidi_bank,fm1_doom_genmidi_bank_len)){music.bank=0;return -1;}
+    music.master=64;
+    music.ticks=music.events=music.loops=music.errors=0;
     return 0;
 }
 
 int fm1_doom_music_start(int loop)
 {
     if(!music.bank)return -1;
-    music.playing=1;music.paused=0;music.looping=loop!=0;reset_stream();
+    music.playing=1;music.paused=0;music.looping=loop!=0;fm1_doom_opl_start(music.master);synth_reset();reset_stream();
     return music.playing?0:-1;
 }
-void fm1_doom_music_stop_locked(void){music.playing=0;music.paused=0;memset(music.voices,0,sizeof(music.voices));}
+void fm1_doom_music_stop_locked(void){music.playing=0;music.paused=0;fm1_doom_opl_stop();memset(&synth,0,sizeof(synth));}
 void fm1_doom_music_pause(int paused){music.paused=paused!=0;}
-void fm1_doom_music_set_volume(unsigned volume){music.master=(uint8_t)(volume>127?127:volume);}
+void fm1_doom_music_set_volume(unsigned volume){music.master=(uint8_t)(volume>127?127:volume);fm1_doom_opl_volume(music.master);}
+void fm1_doom_music_set_synth_mode(unsigned mode){synth_mode=mode!=0;if(!music.playing)synth.blend=synth_mode?256:0;}
+unsigned fm1_doom_music_get_synth_mode(void){return synth_mode;}
+void fm1_doom_music_toggle_synth_mode(void){fm1_doom_music_set_synth_mode(!synth_mode);}
 int fm1_doom_music_is_playing(void){return music.playing;}
-
-static void pitch(voice *v)
-{
-    uint32_t base=increments[v->note];
-    int change=(int)music.channels[v->channel].wheel-128;
-    v->increment=base+(int32_t)(base>>10)*change; /* approximately +/-2 semitones */
-}
-
-static void note_on(unsigned ch,unsigned note,unsigned velocity)
-{
-    unsigned i,chosen=0;uint32_t best=0xffffffffu;
-    for(i=0;i<VOICE_COUNT;i++){
-        voice *v=&music.voices[i];
-        uint32_t priority=v->envelope;
-        if(!v->envelope){chosen=i;best=0;break;}
-        if(v->released || v->channel==15)priority>>=2;
-        if(priority<best){best=priority;chosen=i;}
-    }
-    if(best)++music.steals;
-    music.voices[chosen]=(voice){0,0,0,1,(uint8_t)note,(uint8_t)ch,(uint8_t)velocity,
-                              music.channels[ch].program,0,0};
-    pitch(&music.voices[chosen]);
-}
-
-static void note_off(unsigned ch,unsigned note)
-{
-    unsigned i;
-    for(i=0;i<VOICE_COUNT;i++)if(music.voices[i].channel==ch && music.voices[i].note==note){
-        music.voices[i].held=music.channels[ch].sustain;
-        music.voices[i].released=!music.channels[ch].sustain;
-    }
-}
 
 static int event(void)
 {
-    uint8_t descriptor,a=0,b=0;unsigned kind,ch,i;
+    uint8_t descriptor,a=0,b=0;unsigned kind,ch;
     if(!score_byte(&descriptor))return 0;
     kind=descriptor>>4;ch=descriptor&15;
     if(kind==6){
@@ -149,25 +216,8 @@ static int event(void)
     if(kind>4 || !score_byte(&a))return 0;
     if((kind==1 || kind==4) && !score_byte(&b))return 0;
     if((kind==0 || kind==1) && (a>127 || b>127))return 0;
-    if(kind==0)note_off(ch,a);
-    else if(kind==1){if(b)note_on(ch,a,b);else note_off(ch,a);}
-    else if(kind==2){music.channels[ch].wheel=a;for(i=0;i<VOICE_COUNT;i++)if(music.voices[i].channel==ch)pitch(&music.voices[i]);}
-    else if(kind==3){
-        if(a==10 || a==11 || a==13 || a==14)for(i=0;i<VOICE_COUNT;i++)if(music.voices[i].channel==ch){
-            if(a==10)music.voices[i].envelope=0;else music.voices[i].released=1;
-        }
-        if(a==14)music.channels[ch]=(channel){0,100,64,128,0,127};
-    }else {
-        if(a>9 || b>127)return 0;
-        if(a==0)music.channels[ch].program=b;
-        else if(a==3)music.channels[ch].volume=b;
-        else if(a==4)music.channels[ch].pan=b;
-        else if(a==5)music.channels[ch].expression=b;
-        else if(a==8){
-            music.channels[ch].sustain=b>=64;
-            if(b<64)for(i=0;i<VOICE_COUNT;i++)if(music.voices[i].channel==ch && music.voices[i].held){music.voices[i].held=0;music.voices[i].released=1;}
-        }
-    }
+    if(fm1_doom_opl_event(kind,ch,a,b))return 0;
+    synth_event(kind,ch,a,b);
     ++music.events;
     return next_delay();
 }
@@ -182,64 +232,33 @@ static void tick(void)
     ++music.ticks;
 }
 
-static int triangle(uint32_t phase)
-{
-    unsigned p=phase>>20;
-    return p<2048u?(int)p-1024:3071-(int)p;
-}
 static int16_t clip(int value){return (int16_t)(value>8191?8191:value<-8192?-8192:value);}
 
 void fm1_doom_music_sample_stereo(int16_t *left,int16_t *right)
 {
-    int l=0,r=0;unsigned i;
+    int sample,analog;int16_t full,drums;
     if(!left || !right)return;
     *left=*right=0;
     if(!music.playing || music.paused)return;
     if(!music.sample_count){tick();music.sample_count=TICK_FRAMES;}
     --music.sample_count;
     if(!music.playing)return;
-    music.noise^=music.noise<<13;music.noise^=music.noise>>17;music.noise^=music.noise<<5;
-    for(i=0;i<VOICE_COUNT;i++){
-        voice *v=&music.voices[i];channel *c;int wave,sample;unsigned sustain;
-        if(!v->envelope)continue;
-        c=&music.channels[v->channel];++v->age;v->phase+=v->increment;
-        if(v->channel==15){
-            unsigned lifetime=(v->note==42 || v->note==44)?1323u:4410u;
-            if(v->age>lifetime)v->released=1;
-            wave=(int)(music.noise&2047u)-1024;
-            if(v->note==35 || v->note==36)wave=triangle(v->age*7791324u);
-        }else {
-            wave=triangle(v->phase);
-            if(v->program==29 || v->program==30){
-                wave+=triangle(v->phase*2u)/2;wave*=2;
-                if(wave>1023)wave=1023;if(wave<-1024)wave=-1024;
-            }else if(v->program<8)wave+=triangle(v->phase*2u)/4;
-        }
-        if(v->released){
-            unsigned decay=(v->envelope>>10)+1u;
-            v->envelope=(uint16_t)(v->envelope>decay?v->envelope-decay:0);
-        }else if(v->age<=180u){
-            unsigned envelope=v->envelope+364u;v->envelope=(uint16_t)(envelope>65535u?65535u:envelope);
-        }else {
-            sustain=v->channel==15?0u:(v->program<8?8192u:24576u);
-            if(v->envelope>sustain)v->envelope=(uint16_t)(v->envelope-((v->envelope-sustain)>>12)-1u);
-        }
-        sample=(wave*(int)v->envelope)>>16;
-        sample=sample*(int)v->velocity/127;
-        sample=sample*(int)c->volume/127;
-        sample=sample*(int)c->expression/127;
-        l+=sample*(127-(int)c->pan)/127;r+=sample*(int)c->pan/127;
-    }
-    /* Headroom for gunfire remains after bringing the quiet oscillator mix
-     * to a useful PCM16 level; each channel is capped at one quarter scale. */
-    *left=clip(l*(int)music.master*8/127);*right=clip(r*(int)music.master*8/127);
+    /* DOS OPL2 is mono. Original DMX music-volume and GENMIDI operator-level
+     * rules run inside the driver. A fixed gain leaves room for
+     * the independent PCM gunshot mixer; no instrument is rebalanced. */
+    fm1_doom_opl_sample_split(&full,&drums);
+    analog=synth_sample()*2+(int)drums*2; /* Original drums6.02dB below OPL mode. */
+    if(synth_mode){if(synth.blend<256)synth.blend+=4;}
+    else if(synth.blend)synth.blend-=4;
+    sample=((int)full*4*(256-(int)synth.blend)+analog*(int)synth.blend)/256;
+    *left=*right=music.master?clip(sample):0;
 }
 int32_t fm1_doom_music_sample(void){int16_t l,r;fm1_doom_music_sample_stereo(&l,&r);return ((int32_t)l+r)/2;}
 void fm1_doom_music_get_diagnostics(fm1_doom_music_diagnostics *d)
 {
-    unsigned i;if(!d)return;
-    *d=(fm1_doom_music_diagnostics){music.ticks,music.events,music.loops,music.steals,music.errors,0};
-    for(i=0;i<VOICE_COUNT;i++)d->active_voices+=music.voices[i].envelope!=0;
+    if(!d)return;
+    *d=(fm1_doom_music_diagnostics){music.ticks,music.events,music.loops,
+        fm1_doom_opl_steals(),music.errors,fm1_doom_opl_active()};
 }
 
 #ifdef FM1_TARGET_PI32V2

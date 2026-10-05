@@ -36,6 +36,48 @@ The trimmed main menu contains only New Game and Options. Its original image
 patches and finer menu scaling remain. Gameplay toggles between exact 8×8 LCD
 blocks and all 160×93 gameplay samples, with detailed HUD in both modes.
 
+## Current OPL/synth/volume revision: offline verification
+
+- The WHX music conversion inverted some pitch bends. The target now uses the
+  native original 5,826-event MUS score. All 37,784 original DOS OPL register
+  writes and 4,233,600 PCM output frames match an independent unchanged
+  driver/core reference through the complete loop and volume changes.
+- Original GENMIDI patches use a 563 B sparse bank. Effects use lossless PCM8
+  Rice coding with exact duration, original menu open/close samples and
+  identical noway/oof sharing. The 12,613 B effect bank is 6.02 dB quieter in
+  the final mixer. It contains a subset of original effects.
+- E4 selects DOS OPL or a default VCO/VCA/VCF synth treatment. The latter
+  keeps OPL percussion at half amplitude. Tests cover eight-voice filter
+  stability, release-to-silence, mode transitions and mute.
+- PB6 ADC4 controls master volume, using bounded existing driver work in
+  the audio callback. Startup/conversion errors mute safely; diagnostics
+  report raw value, gain, validity and errors. No new task/heap is added.
+- Unused FAT closure removal saves 41,504 B in the original size probe,
+  retaining the three SDFILE configuration drivers. Final link checks their
+  exact 360-byte registration and rejects unintended FAT drivers.
+- Lossless graphics compaction reduces the archive from 177,331 to 170,505 B.
+  All 493 names/order, 424 decoded patches and 70 composite textures remain;
+  all maps/flats/marker data match. No cache or graphics fidelity reduction.
+- USB GAME/frame capture uses existing pixels/palette and 128 B persistent
+  diagnostics state. It releases on disconnect/error/STOP or 15 seconds;
+  audio and scanner continue during a brief between-tick game pause.
+- App: 554,800 B, SHA-256
+  `a908bde332159a94b3ab86f8eb769cb103e3e70fd135087cb319383763f71360`.
+  Static RAM: 477,912 B; linker heap: 45,644 B; reviewed reserve: 4,096 B.
+  This is a static floor, not a runtime free-heap measurement.
+- Python 59/59 and native contracts pass; all 79 engine/7 port sources compile
+  for the target and SDK link passes. Final 16-second OPL/synth mixes have
+  zero clipping/music errors. Mixed peaks are -12.79/-16.52 dBFS.
+- Host navigation with installed and compacted maps reaches the corridor,
+  opens the first door with one F5 edge, and reaches active enemies. The
+  user's small-area report has no reproduced collision defect; actual device
+  capture and whole-level traversal remain pending.
+
+This revision is not flashed yet; the FM-1 is disconnected. The 136-sector
+offline plan preserves boot/config/tail and passes update/restore simulation.
+Physical volume, audio IRQ deadline, screen capture, sustained controls and
+30 FPS remain device checks.
+
 ## Historical installed graphics/input milestone
 
 - App: 569,840 B, SHA-256 `0463c496f4bf44a12af49ef0ab653808bffd8bc85ceda6ea7d73f036f4f4ef76`.

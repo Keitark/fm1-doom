@@ -4,6 +4,7 @@
 
 typedef struct { uint8_t slot, key; } key_binding;
 #define PRESENTATION_KEY_BIT (UINT64_C(1) << 24)
+#define MUSIC_MODE_KEY_BIT (UINT64_C(1) << 25)
 
 /* Stock-derived slots, not MIDI note numbers. Directions use the leftmost
    F-to-A group; fire/use use the far-right F/G pair. */
@@ -113,7 +114,7 @@ int fm1_doom_present(fm1_doom_port *port, const uint8_t indexed[FM1_DOOM_SOURCE_
 int fm1_doom_next_key(fm1_doom_port *port, int *pressed, uint8_t *key)
 {
     unsigned i;
-    uint64_t mapped = PRESENTATION_KEY_BIT;
+    uint64_t mapped = PRESENTATION_KEY_BIT | MUSIC_MODE_KEY_BIT;
     if (!port || !pressed || !key) return 0;
     for (i = 0; i < sizeof(bindings) / sizeof(bindings[0]); ++i)
         mapped |= UINT64_C(1) << bindings[i].slot;
@@ -128,6 +129,16 @@ int fm1_doom_next_key(fm1_doom_port *port, int *pressed, uint8_t *key)
             port->coarse_gameplay ^= 1u;
         } else {
             port->reported_keys &= ~PRESENTATION_KEY_BIT;
+        }
+    }
+    if (port->pending_keys & MUSIC_MODE_KEY_BIT) {
+        port->pending_keys &= ~MUSIC_MODE_KEY_BIT;
+        if (port->sampled_keys & MUSIC_MODE_KEY_BIT) {
+            port->reported_keys |= MUSIC_MODE_KEY_BIT;
+            if (port->io.toggle_music_mode)
+                port->io.toggle_music_mode(port->io.context);
+        } else {
+            port->reported_keys &= ~MUSIC_MODE_KEY_BIT;
         }
     }
     if (!port->pending_keys) return 0;
