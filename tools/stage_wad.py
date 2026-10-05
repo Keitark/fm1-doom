@@ -175,11 +175,13 @@ def pixelate_flat(data: bytes, factor: int) -> bytes:
 
 
 def prune_graphics(lumps: list[Lump], map_name: bytes, sprites: bool,
-                   pixelate: int, weapon_pixelate: int | None = None) -> list[Lump]:
+                   pixelate: int, weapon_pixelate: int | None = None,
+                   fist_pixelate: int | None = None) -> list[Lump]:
     """Keep the selected map's walls/flats plus episode-one switches/sky.
 
     Non-level UI graphics remain intact. Optional pixelation preserves logical
-    dimensions; weapon_pixelate overrides only retained pistol/fist view art.
+    dimensions; weapon_pixelate overrides retained pistol/fist view art, and
+    fist_pixelate can separately reduce the fist to leave room for audio.
     """
     by_name = {lump.name: lump for lump in lumps}
     index = next(i for i, lump in enumerate(lumps) if lump.name == map_name)
@@ -266,6 +268,9 @@ def prune_graphics(lumps: list[Lump], map_name: bytes, sprites: bool,
         if (namespace == b"S" and weapon_pixelate is not None
                 and lump.name[:4].upper() in WEAPON_VIEW_PREFIXES):
             lump_pixelate = weapon_pixelate
+        if (namespace == b"S" and fist_pixelate is not None
+                and lump.name[:4].upper() == b"PUNG"):
+            lump_pixelate = fist_pixelate
         if lump_pixelate > 1 and lump.data and namespace in (b"S", b"P"):
             lump = Lump(lump.name, pixelate_patch(lump.data, lump_pixelate))
         elif pixelate > 1 and lump.data and namespace == b"F":
@@ -312,6 +317,8 @@ def main() -> None:
                         help="Coarsen patch/sprite/flat pixels while keeping logical dimensions")
     parser.add_argument("--weapon-pixelate", type=int, choices=(1, 2, 4, 8, 16),
                         help="Override pistol/fist view patch pixelation; defaults to --pixelate")
+    parser.add_argument("--fist-pixelate", type=int, choices=(1, 2, 4, 8, 16),
+                        help="Override fist art separately; retains the selected pistol detail")
     args = parser.parse_args()
     map_name = args.map.upper().encode("ascii")
     if not MAP.fullmatch(map_name):
@@ -324,9 +331,11 @@ def main() -> None:
         parser.error("--prune-sprites requires --prune-graphics")
     if args.weapon_pixelate is not None and not args.prune_graphics:
         parser.error("--weapon-pixelate requires --prune-graphics")
+    if args.fist_pixelate is not None and not args.prune_graphics:
+        parser.error("--fist-pixelate requires --prune-graphics")
     if args.prune_graphics:
         stage = prune_graphics(stage, map_name, args.prune_sprites, args.pixelate,
-                               args.weapon_pixelate)
+                               args.weapon_pixelate, args.fist_pixelate)
     if args.no_ui:
         if map_name != b"E1M1" or not args.no_attract_art:
             parser.error("--no-ui requires --map E1M1 and --no-attract-art")

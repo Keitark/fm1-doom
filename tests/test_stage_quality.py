@@ -64,6 +64,20 @@ class StageQualityTests(unittest.TestCase):
         by_name = {l.name: l.data for l in result}
         self.assertEqual(by_name[b"PISGA0"], pixelate_patch(patch(), 4))
 
+    def test_fist_space_saving_preserves_pistol_enemies_menu_and_geometry(self):
+        original = complete_fixture()
+        baseline = prune_graphics(original, b"E1M1", True, 4, weapon_pixelate=1)
+        result = prune_graphics(original, b"E1M1", True, 4,
+                                weapon_pixelate=1, fist_pixelate=2)
+        self.assertEqual([l.name for l in result], [l.name for l in baseline])
+        for before, after in zip(baseline, result):
+            if before.name == b"PUNGA0":
+                self.assertEqual(after.data, pixelate_patch(patch(), 2))
+                self.assertNotEqual(after.data, before.data)
+                self.assertEqual(after.data[:8], before.data[:8])
+            else:
+                self.assertEqual(after, before)
+
     def test_weapon_override_can_be_coarser_than_world(self):
         result = prune_graphics(complete_fixture(), b"E1M1", True, 1, weapon_pixelate=2)
         by_name = {l.name: l.data for l in result}

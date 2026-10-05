@@ -16,6 +16,11 @@ struct fm1_doom_usb_status {
     uint32_t scan_failure_reason, scan_failure_row;
     uint32_t scan_failure_con, scan_failure_dma_count;
     uint32_t coarse_gameplay;
+    int audio_ready, audio_error;
+    uint32_t audio_irqs, audio_frames, sfx_started, sfx_voices;
+    uint32_t music_playing, music_ticks, music_events, music_loops;
+    uint32_t music_steals, music_errors, music_voices, usb_stack_words;
+    uint32_t max_audio_irq_us;
 };
 
 void fm1_doom_usb_get_status(struct fm1_doom_usb_status *status);
@@ -52,5 +57,6 @@ void fm1_doom_usb_protocol_tick(fm1_doom_usb_protocol *protocol,
                                const fm1_doom_usb_protocol_io *io);
 void fm1_doom_usb_protocol_status(const fm1_doom_usb_protocol_io *io);
 void fm1_doom_usb_protocol_trace(const fm1_doom_usb_protocol_io *io);
+void fm1_doom_usb_protocol_audio(const fm1_doom_usb_protocol_io *io);
 
 #endif

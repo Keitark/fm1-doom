@@ -2,7 +2,19 @@
  * diagnostic hook; discard other console output without formatting it. */
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
+
+/* The SDK's shared string archive also pulls atof and software double math.
+ * Doom needs only this bounded allocation-and-copy operation from that member. */
+char *strdup(const char *source)
+{
+    size_t length = strlen(source) + 1u;
+    char *copy = malloc(length);
+    if (copy) memcpy(copy, source, length);
+    return copy;
+}
 
 int fprintf(FILE *stream, const char *format, ...)
 {

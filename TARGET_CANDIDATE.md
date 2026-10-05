@@ -10,13 +10,18 @@ converter shares the LCD driver's persistent DMA strip. Scanner bits have a
 500 µs clock; the coarse 10 ms clock could falsely hit its 10 ms watchdog.
 Input failures release keys and retry with 50–1000 ms backoff while rendering
 continues, resetting the streak after one second of healthy sweeps. Engine errors, including LCD
-transfer failures, record a bounded RAM message and stop the LCD/scanner;
-USB status and serial UBOOT remain available. These paths need physical testing.
+transfer failures, record a bounded RAM message and stop LCD/scanner/audio;
+USB status and serial UBOOT remain available. Audio initialization failure is
+nonfatal to rendering and is reported separately. Music and effects are now
+audible on the device; current audio shutdown and sound quality remain under
+review.
 
 The first-stage game contains E1M1 only. Its original image menu offers New
 Game and graphic detail; completing E1M1 starts E1M1 again rather than entering
-an absent intermission/E1M2. Music and sound effects, save/load, and persistent
-configuration are disabled. `fm1_doom_frames`, `fm1_doom_last_frame_ms`,
+an absent intermission/E1M2. The new audio backend implements original sound
+effects and the original E1M1 score through one shared IIS mixer; other music
+tracks remain disabled. Save/load and persistent configuration are disabled.
+`fm1_doom_frames`, `fm1_doom_last_frame_ms`,
 `fm1_doom_max_frame_interval_ms`, `fm1_doom_slow_frames`, `fm1_doom_stage`, and
 `fm1_doom_fault`, and `fm1_doom_error_message` are RAM diagnostics. They are
 not a completed 30 FPS test.
@@ -29,12 +34,18 @@ artifacts; no game data is committed.
 ```powershell
 git submodule update --init
 python tools/make_lowres_engine.py
-python tools/stage_wad.py C:\path\to\doom1.wad build\stage-menu-ui.wad --map E1M1 --silent --prune-graphics --prune-sprites --no-attract-art --no-ui --menu-ui --pixelate 4 --weapon-pixelate 1
-python tools/pack_archive.py build\stage-menu-ui.wad build\menu-ui-4k.wad --block-size 4096
+python tools/stage_wad.py C:\path\to\doom1.wad build\stage-menu-ui.wad --map E1M1 --silent --prune-graphics --prune-sprites --no-attract-art --no-ui --menu-ui --pixelate 4 --weapon-pixelate 1 --fist-pixelate 2
+python tools/pack_archive.py build\stage-menu-ui.wad build\menu-ui-4k.fmd --block-size 4096
+python tools/make_sound_bank.py --wad C:\path\to\doom1.wad --output-dir build\sound-bank
+python tools/make_music_score.py C:\path\to\doom1.wad build\music-bank
 python tools/compile_target_engine.py --fm1-root F:\dev\fm1 --lowres
 python tools/compile_target_port.py --fm1-root F:\dev\fm1 --lowres
-python tools/build_target_candidate.py build\menu-ui-4k.wad --fm1-root F:\dev\fm1
+python tools/build_target_candidate.py build\menu-ui-4k.fmd --fm1-root F:\dev\fm1
 ```
+
+The stage tool's `--silent` removes audio from the WAD. Sound and music are
+generated separately from the lawful source IWAD into private XIP banks;
+the shared IIS backend reads those banks without the FMD1 cache/inflater.
 
 The builder requires the pinned SDK and a reviewed local FM-1 boot baseline.
 It verifies every FMD1 block and CRC, checks that the exact archive bytes land
@@ -54,23 +65,48 @@ tool must handle its normal encoding, directory CRCs, and placement. Never
 write these plain bytes directly at physical flash address `0x4120`.
 
 The builder sets `flashable: true` for this UBOOT **input format** and
-`hardware_boot_verified: false`. The generated file includes derived game
+`hardware_boot_verified: false` at build time; subsequent physical deployment
+is recorded below. The generated file includes derived game
 data and is ignored by Git; keep it private. Check its size and SHA-256
 against the manifest before loading it in your UBOOT program.
 
-For the locally tested shareware 1.8 archive (181,995 B), the candidate links
-at 569,840 B app bytes. `.ram0_data` is 26,704 B and `.ram0_bss` is 447,784 B.
-The linker heap span is 49,068 B. The reviewed task/queue/idle allocation is
-42,584 B, plus an 800 B initialization allowance and 1,236 B of measured USB
-allocations, leaving 4,448 B before remaining allocations and allocator padding.
-The Doom and USB tasks each request 2048 SDK words (8 KiB).
+## Installed audio application
+
+The final local application is 583,216 B, leaving 1,740 B in the reviewed
+584,956 B slot. Its SHA-256 is
+`715f58b29fd2f0280ead27adf975aa5908b6832b5b6ebf92634ca7426a9927a5`.
+The selected shareware E1M1 archive is 177,331 B, SHA-256
+`551640b7f5f8c747c19a15353cd1657aaa2eaa49ea22c53f81c40912a227623b`.
+It retains original pistol/menu detail, 2×2 fist patches and 4×4 world/enemies.
+The private sound/music payloads are 6,064 B and 10,722 B and are included in
+the app image.
+
+| Memory item | Bytes |
+| --- | ---: |
+| `.ram0_data` | 26,800 |
+| `.ram0_bss` | 448,376 |
+| Total static RAM | 475,176 |
+| Linker heap before runtime | 48,364 |
+| Reviewed tasks/queues/two idle tasks | 38,488 |
+| Initialization allowance | 800 |
+| USB heap requests | 1,236 |
+| IIS DMA allocation | 1,024 |
+| Reserve after reviewed startup | 6,816 |
+| Required linker heap, including 4,096 B minimum reserve | 45,644 |
+
+Doom requests 2048 SDK words/8 KiB; USB requests 1024 words/4 KiB and reports
+unused stack words through `DOOM AUDIO`. The installed graphics/input milestone
+was 569,840 B with a 181,995 B archive, 474,488 B static RAM and 49,068 B heap;
+that older image used an 8 KiB USB stack and had audio disabled.
 The inflater uses a 7 KiB static arena and explicit allocation callbacks;
 the lump directory uses the fixed Doom zone. Both are included in static RAM.
 The builder requires at least 4096 B of reserve after the reviewed startup
 budget. The archive is included in those app bytes,
 not added afterward. The ELF/app bytes and archive hashes are in the local
-manifest. This proves the UBOOT input's offline layout and static placement,
-not boot or runtime memory safety.
+manifest. All 411 closure hashes match; 43 Python tests and four focused
+audio/protocol/formatter CTests pass. These offline checks establish layout
+and static placement; the subsequent flash/boot evidence below is separate
+from runtime memory and sound-quality acceptance.
 
 ## Existing protected writer
 
@@ -95,6 +131,10 @@ Physical LCD/input observation is also required. `DOOM STATUS` reports stage,
 fault, frames, LCD/key errors, clocks and the bounded engine error message.
 `DOOM STOP` shuts down peripherals cooperatively; `UBOOT` and the existing
 confirmation handshake enter download mode only after Doom has stopped.
+`DOOM AUDIO` reports sound/music readiness, errors and progress, USB unused
+stack words and maximum observed IRQ duration. Duration is quantized to
+500 µs, while each 64-frame audio half has about a 1.451 ms deadline; IRQ/frame
+counters do not establish that no DMA deadlines were missed.
 
 ## Deployment and remaining gates
 
@@ -109,9 +149,26 @@ Its flash/readback/reset and CDC boot passed. The engine reported
 the SDK formatter omits `%i`. Generated printf formats now use equivalent `%d`,
 while scanf `%i` remains unchanged. Serial UBOOT recovery worked after the fault.
 The final correction passed six-sector/full-readback verification and reset.
-CDC now reports a running engine and advancing frames with zero faults; the
-user confirms visible gameplay. Controls and performance remain under test.
+At that corrected boot, CDC reported a running engine and advancing frames
+with zero faults; the user confirmed visible gameplay. The later 569,840 B
+milestone established stable physical controls and both graphics views.
 See [DEPLOYMENT.md](DEPLOYMENT.md).
+
+The 583,216 B audio application was then written and fully readback-verified:
+143 changed sectors, with directory sector `0x4000` last. Complete readback
+SHA-256 is `ce9544e7730372690c9912a83d17ae73d641406c9153d26ada64ce3a7eea6ca9`.
+Reset and COM6 `DOOM-FM1/1` observation passed at stage 4, frames 149→182,
+with zero engine/LCD/key errors. The user hears both music and sound effects;
+balance/timbre remains under review.
+
+In a separate 105-second Detailed-mode capture, frames advanced 1084→2220
+over 104.078 seconds (about 10.91489 counter increments/s). Audio IRQs advanced
+69160→140162, output frames 4426240→8970368 and music loops 1→2; audio was
+ready/playing with zero audio/music errors and no scanner failures/retries.
+USB minimum unused stack was 378 words/1512 B. Maximum reported audio IRQ
+duration was 500 µs, quantized to 500 µs, so that measurement was below
+1000 µs; it does not establish underrun-free audio. This capture adds no new
+physical movement/firing confirmation.
 
 - The 32-bit Windows host completes 300 moving ticks and 80-tick menu/restart/
   exit scripts with a 296 KiB Doom zone, including the zone-backed lump
@@ -120,10 +177,13 @@ See [DEPLOYMENT.md](DEPLOYMENT.md).
 - Host tests check LCD commands, row-zero placement, eight-row transfer, failure
   propagation, key debounce, and every optimized output pixel against the
   original mapper. SDK-header inflater tests use a real desktop zlib DLL and
-  decode all 114 local archive blocks; target compilation checks the SDK binding.
-- The actual FM-1 must still verify startup, power handoff, XIP reads,
-  decoder heap use, task stack, LCD/key behavior, and the full ELF/update
-  layout. Sound and 30 completed distinct gameplay frames/s remain
-  unimplemented or unmeasured. USB recovery is implemented and needs device evidence.
+  decoded all 114 blocks of the earlier menu archive; target compilation checks
+  the SDK binding. The builder validates every block of the final archive.
+- Physical boot, visible gameplay, sustained controls, both graphics views and
+  serial UBOOT recovery are established for the historical 569,840 B image.
+  The installed 583,216 B image adds verified flash/readback/boot, audible
+  music/effects, sustained audio/scanner progress and USB stack telemetry.
+  Sound quality, current audio shutdown, runtime heap/other stack headroom,
+  full-map traversal and 30 completed distinct gameplay frames/s remain open.
 - Preserve the known-good installed v32 image and a reviewed restore path before
   any physical write. No device operation is performed by the builder.

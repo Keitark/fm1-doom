@@ -138,6 +138,85 @@ def bound_texture_columns(path: Path) -> None:
                  "    return FM1_CompositeColumn(tex, col);")
 
 
+def install_target_audio(path: Path) -> None:
+    replace_once(path, "#if defined(FEATURE_SOUND) && !defined(__DJGPP__)",
+                 "#if defined(FEATURE_SOUND) && !defined(__DJGPP__) && !defined(FM1_TARGET_PI32V2)")
+    replace_once(path, '#include "i_sound.h"',
+                 '#include "i_sound.h"\n#ifdef FM1_TARGET_PI32V2\n'
+                 '#include "fm1_doom_sound.h"\n#include "fm1_doom_music.h"\n#endif')
+    replace_once(path, "    #ifdef FEATURE_SOUND\n    &DG_sound_module,\n    #endif",
+                 "    #ifdef FM1_TARGET_PI32V2\n    &fm1_sound_module,\n"
+                 "    #elif defined(FEATURE_SOUND)\n    &DG_sound_module,\n    #endif")
+    replace_once(path, "#ifdef FEATURE_SOUND\n    music_module = &DG_music_module;\n#endif /* FEATURE_SOUND */",
+                 "#ifdef FM1_TARGET_PI32V2\n"
+                 "    music_module = fm1_music_module.Init() ? &fm1_music_module : NULL;\n"
+                 "#elif defined(FEATURE_SOUND)\n    music_module = &DG_music_module;\n"
+                 "#endif /* FEATURE_SOUND */")
+
+
+def install_target_music(path: Path) -> None:
+    replace_once(path, "    void *handle;\n\n    // The Doom IWAD",
+                 "    void *handle;\n\n#ifdef FM1_TARGET_PI32V2\n"
+                 "    /* Only the private E1M1 score is packaged. */\n"
+                 "    if (musicnum != mus_e1m1) { S_StopMusic(); return; }\n"
+                 "#endif\n\n    // The Doom IWAD")
+    replace_once(path, "    // get lumpnum if neccessary\n",
+                 "#ifdef FM1_TARGET_PI32V2\n"
+                 "    /* The private score lives in XIP, outside the WAD directory. */\n"
+                 "    music->data = NULL;\n"
+                 "    music->lumpnum = -1;\n"
+                 "    handle = I_RegisterSong(NULL, 0);\n"
+                 "#else\n    // get lumpnum if neccessary\n")
+    replace_once(path, "    handle = I_RegisterSong(music->data, W_LumpLength(music->lumpnum));\n",
+                 "    handle = I_RegisterSong(music->data, W_LumpLength(music->lumpnum));\n#endif\n")
+    replace_once(path, "        W_ReleaseLumpNum(mus_playing->lumpnum);",
+                 "#ifndef FM1_TARGET_PI32V2\n"
+                 "        W_ReleaseLumpNum(mus_playing->lumpnum);\n#endif")
+
+
+def install_target_sfx_guard(path: Path) -> None:
+    replace_once(path, "    sfx = &S_sfx[sfx_id];",
+                 "    sfx = &S_sfx[sfx_id];\n"
+                 "#ifdef FM1_TARGET_PI32V2\n"
+                 "    /* Missing private-bank sounds must not evict an active pistol voice. */\n"
+                 "    if (sfx->lumpnum < 0) sfx->lumpnum = I_GetSfxLumpNum(sfx);\n"
+                 "    if (sfx->lumpnum < 0) return;\n#endif")
+
+
+def install_target_integer_parsers(directory: Path) -> None:
+    config = directory / "m_config.c"
+    replace_once(config, "    int parm;\n\n    if (strparm[0] == '0' && strparm[1] == 'x')",
+                 "#ifdef FM1_TARGET_PI32V2\n"
+                 "    return (int)strtoul(strparm, NULL, 0);\n"
+                 "#else\n    int parm;\n\n    if (strparm[0] == '0' && strparm[1] == 'x')")
+    replace_once(config, "    return parm;\n}", "    return parm;\n#endif\n}")
+    replace_once(config, "            * (float *) def->location = (float) atof(value);",
+                 "#ifndef FM1_TARGET_PI32V2\n"
+                 "            * (float *) def->location = (float) atof(value);\n"
+                 "#else\n"
+                 "            /* No target float config input; retain compiled defaults. */\n"
+                 "            (void)value;\n#endif")
+    misc = directory / "m_misc.c"
+    replace_once(misc, "    return sscanf(str, \" 0x%x\", result) == 1",
+                 "#ifdef FM1_TARGET_PI32V2\n"
+                 "    char *end;\n    long value;\n"
+                 "    while (isspace((unsigned char)*str)) ++str;\n"
+                 "    /* Keep scanf's prefix/fallback order, including 08 and signed decimals. */\n"
+                 "    if (str[0] == '0') {\n"
+                 "        const char *digits = str + 1;\n"
+                 "        int base = 8;\n"
+                 "        if (*digits == 'x' || *digits == 'X') { ++digits; base = 16; }\n"
+                 "        value = (long)strtoul(digits, &end, base);\n"
+                 "        if (end != digits) { *result = (int)value; return true; }\n"
+                 "    }\n"
+                 "    value = strtol(str, &end, 10);\n"
+                 "    if (end == str) return false;\n"
+                 "    *result = (int)value;\n    return true;\n"
+                 "#else\n    return sscanf(str, \" 0x%x\", result) == 1")
+    replace_once(misc, '        || sscanf(str, " %d", result) == 1;',
+                 '        || sscanf(str, " %d", result) == 1;\n#endif')
+
+
 def main() -> None:
     head = subprocess.check_output(["git", "-C", str(SOURCE), "rev-parse", "HEAD"], text=True).strip()
     if head != PIN:
@@ -200,6 +279,10 @@ def main() -> None:
                  "    setblocks = 11; /* low-resolution proof: force full view */")
     scale_weapon_sprites(TARGET / "r_main.c")
     bound_texture_columns(TARGET / "r_data.c")
+    install_target_audio(TARGET / "i_sound.c")
+    install_target_music(TARGET / "s_sound.c")
+    install_target_sfx_guard(TARGET / "s_sound.c")
+    install_target_integer_parsers(TARGET)
     status = TARGET / "st_stuff.c"
     replace_function(status, "void ST_Drawer (boolean fullscreen, boolean refresh)",
                      "void ST_Drawer (boolean fullscreen, boolean refresh)\n"

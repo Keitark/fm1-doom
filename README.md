@@ -21,7 +21,12 @@ stalled with scanner error `-3` while frames kept advancing. The revised build
 uses a hardware-interpolated scanner clock and continuing recovery with backoff.
 The user now confirms stable controls and both presentation modes; a 60-second
 Detailed-mode capture has zero faults and about 11 counter increments/s.
-Audio and the 30 FPS target remain open.
+The installed audio backend plays original pistol/pickup/oof effects and the
+E1M1 score through an eight-voice synthesizer; the user confirms hearing music
+and effects. A 105-second Detailed-mode capture has zero reported errors,
+successful music looping and about 10.9 counter increments/s. Instrument
+quality and mix balance are being checked; the 30 FPS target remains open.
+See [audio](AUDIO.md).
 The private `build/target-candidate/app.bin` is the verified plain input for a
 WL82 UBOOT flow accepting SDK `-app app.bin`; see [target candidate](TARGET_CANDIDATE.md)
 for its exact format and limits.
@@ -32,8 +37,9 @@ The current 160×100 direct-E1M1 build has two presentation modes: Smooth uses
 exact 8×8 LCD blocks; Detailed uses all 160×93 gameplay samples. Both fill the
 240×240 display, and the original image menu and compact HUD stay detailed.
 Press D♯4 (the fifth black key from the left) to toggle while playing.
-The archive uses original pistol/punch art and 4×4 world/enemy assets:
-181,995 B with a 4 KiB decode cache. Both modes pass 32-bit host gameplay
+The audio build uses original pistol art, 2×2 fist art and 4×4 world/enemy assets:
+177,331 B with a 4 KiB decode cache. The graphics/input milestone's full-detail
+fist archive was 181,995 B. Both modes pass 32-bit host gameplay
 checks at a 296 KiB Doom zone. Whole-texture caches now use a bounded column
 buffer, preventing the reproduced fragmented-zone allocation failure. Runtime
 stack/heap and whole-level hardware acceptance remain open. See the
@@ -101,13 +107,16 @@ allocation. This test does not account for SDK, stack, or screen RAM.
 For the current direct E1M1 first stage, use the generated 160×100 engine:
 
 ```powershell
-python tools/stage_wad.py C:\path\to\doom1.wad build\stage-menu-ui.wad --map E1M1 --silent --prune-graphics --prune-sprites --no-attract-art --no-ui --menu-ui --pixelate 4 --weapon-pixelate 1
+python tools/stage_wad.py C:\path\to\doom1.wad build\stage-menu-ui.wad --map E1M1 --silent --prune-graphics --prune-sprites --no-attract-art --no-ui --menu-ui --pixelate 4 --weapon-pixelate 1 --fist-pixelate 2
 python tools/pack_archive.py build\stage-menu-ui.wad build\menu-ui-4k.fmd --block-size 4096
 ```
 
-This retains original menu images and pistol/punch art while removing
-intermission and status-bar art. The resulting WAD is 590,103 B and its
-4 KiB block FMD1 archive is 181,995 B on the tested shareware input.
+This retains original menu images and pistol art while reducing the four fist
+frames to leave room for audio. The resulting WAD is 582,735 B and its
+4 KiB block FMD1 archive is 177,331 B on the tested shareware input.
+Generate the separate sound/music banks with the commands in [AUDIO.md](AUDIO.md)
+before building the audio target. The zero-length music marker remains in the
+WAD; playback uses the separate immutable score.
 `LOW_MEMORY_EXPERIMENT.md` has the exact build and run commands.
 
 With the clean pinned SDK and toolchain from the existing
@@ -156,14 +165,16 @@ working after the scanner fix; whole-level input acceptance remains open.
 
 ## Limits of the UBOOT input
 
-The reviewed V14/v32 app slot is 584,956 B. The offline E1M1 candidate,
-including its compressed archive, is 569,840 B. It includes a fixed 296 KiB
-Doom zone, 4 KiB archive cache and 7 KiB bounded inflater arena. Static RAM is
-474,488 B, leaving a 49,068 B linked heap span. Reviewed startup uses 42,584 B
-for tasks/queues/idle, an 800 B initialization allowance and 1,236 B USB requests,
-leaving 4,448 B before other allocations/padding. A full Freedoom WAD still
-needs far more memory. Sound, runtime memory verification, sustained physical
-input and the requested 30 FPS remain open.
+The reviewed V14/v32 app slot is 584,956 B. The installed E1M1 audio app,
+including its compressed archive and audio banks, is 583,216 B, leaving 1,740 B.
+It includes a fixed 296 KiB Doom zone, 4 KiB archive cache and 7 KiB bounded
+inflater arena. Static RAM is 475,176 B, leaving a 48,364 B linked heap span.
+Reviewed startup uses 38,488 B for tasks/queues/idle, an 800 B initialization
+allowance, 1,236 B USB requests and 1,024 B IIS DMA, leaving 6,816 B before
+other allocations/padding. Live USB stack telemetry retains 1,512 B unused.
+A full Freedoom WAD still needs far more memory. Runtime heap/Doom-stack
+measurement, whole-map traversal, audio quality and the requested 30 FPS remain
+open.
 See the exact gates in [PORT_STATUS.md](PORT_STATUS.md).
 The hardware goal is 30 completed LCD gameplay frames/s; see
 [PERFORMANCE_TARGET.md](PERFORMANCE_TARGET.md) for the measurement contract.

@@ -35,6 +35,38 @@ add_test(NAME target_lcd_contract COMMAND target_io_tests)
 add_executable(usb_protocol_tests tests/usb_protocol_tests.c src/fm1_doom_usb_protocol.c)
 target_include_directories(usb_protocol_tests PRIVATE include)
 add_test(NAME target_usb_contract COMMAND usb_protocol_tests)
+add_executable(printf_tests tests/printf_tests.c src/fm1_doom_printf.c)
+target_compile_definitions(printf_tests PRIVATE FM1_DOOM_PRINTF_HOST_TEST=1 _CRT_SECURE_NO_WARNINGS)
+add_test(NAME target_integer_formatter_contract COMMAND printf_tests)
+
+set(FM1_DOOM_SOUND_BANK_SOURCE "" CACHE FILEPATH "Private generated FM-1 SFX bank for host sound tests")
+set(FM1_DOOM_BOARD_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../fm1/firmware/nes"
+    CACHE PATH "FM-1 NES support source directory")
+if(FM1_DOOM_SOUND_BANK_SOURCE)
+  if(NOT EXISTS "${FM1_DOOM_SOUND_BANK_SOURCE}" OR
+     NOT EXISTS "${FM1_DOOM_BOARD_ROOT}/src/fm1_audio_queue.c")
+    message(FATAL_ERROR "Sound tests require the private sound bank and FM-1 board support")
+  endif()
+  add_executable(sound_tests tests/sound_tests.c src/fm1_doom_sound.c
+    "${FM1_DOOM_SOUND_BANK_SOURCE}" "${FM1_DOOM_BOARD_ROOT}/src/fm1_audio_queue.c")
+  get_filename_component(FM1_DOOM_SOUND_BANK_DIRECTORY "${FM1_DOOM_SOUND_BANK_SOURCE}" DIRECTORY)
+  target_include_directories(sound_tests PRIVATE include tests "${DOOM_SRC}"
+    "${FM1_DOOM_BOARD_ROOT}/include" "${FM1_DOOM_SOUND_BANK_DIRECTORY}")
+  target_compile_definitions(sound_tests PRIVATE FM1_DOOM_SOUND_TEST=1 _CRT_SECURE_NO_WARNINGS)
+  add_test(NAME target_sound_contract COMMAND sound_tests)
+endif()
+
+set(FM1_DOOM_MUSIC_BANK_SOURCE "" CACHE FILEPATH "Private generated FM-1 music score for host tests")
+if(FM1_DOOM_MUSIC_BANK_SOURCE)
+  if(NOT EXISTS "${FM1_DOOM_MUSIC_BANK_SOURCE}")
+    message(FATAL_ERROR "Music tests require the private generated music score")
+  endif()
+  add_executable(music_score_tests tests/music_score_tests.c src/fm1_doom_music.c
+    "${FM1_DOOM_MUSIC_BANK_SOURCE}")
+  target_include_directories(music_score_tests PRIVATE include "${DOOM_SRC}")
+  target_compile_definitions(music_score_tests PRIVATE FM1_TARGET_PI32V2=1 _CRT_SECURE_NO_WARNINGS)
+  add_test(NAME target_music_score_contract COMMAND music_score_tests)
+endif()
 
 # Optional validation of the target allocation binding using the SDK headers
 # and a real Windows zlib DLL. The SDK library itself runs only on PI32V2.

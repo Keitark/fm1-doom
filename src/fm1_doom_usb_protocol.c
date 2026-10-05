@@ -52,6 +52,25 @@ void fm1_doom_usb_protocol_trace(const fm1_doom_usb_protocol_io *io)
     io->reply(io->context, output);
 }
 
+void fm1_doom_usb_protocol_audio(const fm1_doom_usb_protocol_io *io)
+{
+    struct fm1_doom_usb_status status;
+    char output[352];
+    memset(&status, 0, sizeof(status));
+    io->get_status(io->context, &status);
+    snprintf(output, sizeof(output),
+             "DOOM AUDIO ready=%d error=%d irqs=%lu frames=%lu sfx_started=%lu sfx_voices=%lu music_playing=%lu music_ticks=%lu music_events=%lu music_loops=%lu music_steals=%lu music_errors=%lu music_voices=%lu usb_stack_words=%lu max_irq_us=%lu\n",
+             status.audio_ready, status.audio_error,
+             (unsigned long)status.audio_irqs, (unsigned long)status.audio_frames,
+             (unsigned long)status.sfx_started, (unsigned long)status.sfx_voices,
+             (unsigned long)status.music_playing, (unsigned long)status.music_ticks,
+             (unsigned long)status.music_events, (unsigned long)status.music_loops,
+             (unsigned long)status.music_steals, (unsigned long)status.music_errors,
+             (unsigned long)status.music_voices, (unsigned long)status.usb_stack_words,
+             (unsigned long)status.max_audio_irq_us);
+    io->reply(io->context, output);
+}
+
 static void command(fm1_doom_usb_protocol *protocol, int isolated,
                     const fm1_doom_usb_protocol_io *io)
 {
@@ -62,6 +81,8 @@ static void command(fm1_doom_usb_protocol *protocol, int isolated,
         fm1_doom_usb_protocol_status(io);
     } else if (!strcmp(protocol->line, "DOOM TRACE")) {
         fm1_doom_usb_protocol_trace(io);
+    } else if (!strcmp(protocol->line, "DOOM AUDIO")) {
+        fm1_doom_usb_protocol_audio(io);
     } else if (!strcmp(protocol->line, "DOOM STOP")) {
         io->request_stop(io->context);
         io->reply(io->context, "OK DOOM STOP REQUESTED\n");

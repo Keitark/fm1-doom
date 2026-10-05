@@ -123,6 +123,28 @@ int main(void)
     CHECK(!fake.stop_requests && !fake.arm_calls);
 
     memset(&fake, 0, sizeof(fake));
+    fake.status.audio_ready = 1;
+    fake.status.audio_error = -42;
+    fake.status.audio_irqs = fake.status.audio_frames = UINT32_MAX;
+    fake.status.sfx_started = UINT32_MAX;
+    fake.status.sfx_voices = 2;
+    fake.status.music_playing = 1;
+    fake.status.music_ticks = fake.status.music_events = UINT32_MAX;
+    fake.status.music_loops = fake.status.music_steals = UINT32_MAX;
+    fake.status.music_errors = UINT32_MAX;
+    fake.status.music_voices = 8;
+    fake.status.usb_stack_words = 500;
+    fake.status.max_audio_irq_us = 1000;
+    feed(&protocol, "DOOM AU", 220, &io);
+    CHECK(!fake.used);
+    feed(&protocol, "DIO\n", 221, &io);
+    CHECK(!strcmp(fake.output,
+          "DOOM AUDIO ready=1 error=-42 irqs=4294967295 frames=4294967295 sfx_started=4294967295 sfx_voices=2 music_playing=1 music_ticks=4294967295 music_events=4294967295 music_loops=4294967295 music_steals=4294967295 music_errors=4294967295 music_voices=8 usb_stack_words=500 max_irq_us=1000\n"));
+    CHECK(fake.used < 350 && !fake.stop_requests && !fake.arm_calls);
+    feed(&protocol, "DOOM AUDIO\r\n", 222, &io);
+    CHECK(strstr(fake.output, "ERR LINE ABORTED\n"));
+
+    memset(&fake, 0, sizeof(fake));
     feed(&protocol, "DOOM STOP\n", 300, &io);
     CHECK(fake.stop_requests == 1);
     CHECK(!strcmp(fake.output, "OK DOOM STOP REQUESTED\n"));

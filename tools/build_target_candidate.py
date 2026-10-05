@@ -20,7 +20,8 @@ UBOOT_APP_SLOT_LIMIT = 584_956  # reviewed V14/v32 application slot
 RAM0_LIMIT = 523_596  # pinned linker RAM0 window
 
 
-def task_heap_budget(source: str, usb_dynamic_heap_bytes: int = 0) -> dict:
+def task_heap_budget(source: str, usb_dynamic_heap_bytes: int = 0,
+                     audio_dynamic_heap_bytes: int = 0) -> dict:
     table = re.search(r"const struct task_info task_info_table\[\]\s*=\s*\{(.*?)\n\};", source, re.S)
     if not table:
         raise ValueError("target task table is missing")
@@ -53,9 +54,10 @@ def task_heap_budget(source: str, usb_dynamic_heap_bytes: int = 0) -> dict:
             "minimum_task_heap_bytes": minimum,
             "reviewed_init_allowance_bytes": 800,
             "usb_dynamic_heap_bytes": usb_dynamic_heap_bytes,
+            "audio_dynamic_heap_bytes": audio_dynamic_heap_bytes,
             "required_runtime_reserve_bytes": 4096,
-            "required_linker_heap_bytes": minimum + 800 + usb_dynamic_heap_bytes + 4096,
-            "assumptions": "Pinned SDK task stacks use 32-bit words; allocated queues use qsize bytes plus 92; task control blocks use 164 bytes. USB allocations are measured from the compiled CDC/configuration code; endpoint DMA and inflater workspace are static, and lumpinfo is in the Doom zone."}
+            "required_linker_heap_bytes": minimum + 800 + usb_dynamic_heap_bytes + audio_dynamic_heap_bytes + 4096,
+            "assumptions": "Pinned SDK task stacks use 32-bit words; allocated queues use qsize bytes plus 92; task control blocks use 164 bytes. USB allocations are measured from the compiled CDC/configuration code; IIS DMA allocations are derived from the pinned driver IR and reviewed channel/point configuration. Endpoint DMA and inflater workspace are static, and lumpinfo is in the Doom zone."}
 
 
 def usb_heap_allocations(cdc_ir: str, configuration_ir: str) -> dict:
@@ -76,6 +78,58 @@ def usb_heap_allocations(cdc_ir: str, configuration_ir: str) -> dict:
             "mutex_storage": "os_mutex_create uses embedded static queue storage",
             "endpoint_dma_storage": "four static 256-byte buffers",
             "allocator_padding": "covered by the required 4096-byte runtime reserve"}
+
+
+def iis_heap_allocations(iis_ir: str) -> dict:
+    body = re.search(r"^define\b[^\n]*@iis_open\([^\n]*\).*?^\}", iis_ir, re.M | re.S)
+    if not body:
+        raise ValueError("IIS allocation measurement function is missing")
+    definitions = dict(re.findall(r"^\s*(%[A-Za-z0-9_.]+) = ([^\n]+)", body.group(0), re.M))
+    calls = re.findall(r"\bcall\b[^\n]*@malloc\(i32 (%[A-Za-z0-9_.]+)\)", body.group(0))
+    if len(calls) != 1:
+        raise ValueError("IIS driver must have exactly one measured DMA allocation")
+    product = re.match(r"mul(?: \w+)* i32 (%[A-Za-z0-9_.]+), (%[A-Za-z0-9_.]+)",
+                       definitions.get(calls[0], ""))
+    if not product:
+        raise ValueError("IIS DMA allocation is not the reviewed channels/points product")
+    shift = points = None
+    for operand in product.groups():
+        definition = definitions.get(operand, "")
+        factor = re.match(r"shl(?: \w+)* i32 (%[A-Za-z0-9_.]+), 3\b", definition)
+        count = re.match(r"zext i16 (%[A-Za-z0-9_.]+) to i32\b", definition)
+        if factor:
+            channel = definitions.get(factor.group(1), "")
+            if re.match(r"zext i8 %ch_num[A-Za-z0-9_.]* to i32\b", channel):
+                shift = 8
+        if count:
+            if re.match(r"load i16, i16\* %sr_points[A-Za-z0-9_.]*\b", definitions.get(count.group(1), "")):
+                points = 128
+    if shift != 8 or points != 128:
+        raise ValueError("IIS allocation operands differ from the reviewed driver")
+    return {"enabled_channels": 1, "sr_points": points, "bytes_per_sr_point": shift,
+            "total_requested_bytes": points * shift,
+            "configuration": "Persistent IIS_PORTC platform data; channel_out=data_width=8; sr_points=128",
+            "allocation_formula": "one channel * 128 sr_points * 8 bytes, from pinned iis_open IR"}
+
+
+def generated_xip_bytes(path: Path, symbol: str) -> bytes:
+    source = path.read_text(encoding="utf-8")
+    initializer = re.search(r"const\s+uint8_t\s+" + re.escape(symbol) +
+                            r"\[\][^{]*\{(.*?)\};", source, re.S)
+    if not initializer:
+        raise ValueError(f"generated private bank has no byte array: {symbol}")
+    tokens = [token.strip() for token in initializer.group(1).split(",")]
+    if tokens and not tokens[-1]:
+        tokens.pop()
+    if any(not re.fullmatch(r"0x[0-9a-fA-F]{1,2}|[0-9]{1,3}", token) for token in tokens):
+        raise ValueError(f"generated private bank has an unsupported initializer: {symbol}")
+    values = [int(token, 16) if token.startswith("0x") else int(token) for token in tokens]
+    if any(value > 255 for value in values):
+        raise ValueError(f"generated private bank has a non-byte initializer: {symbol}")
+    payload = bytes(values)
+    if not payload:
+        raise ValueError(f"generated private bank is empty: {symbol}")
+    return payload
 
 
 def source_dependencies(source: Path, include_dirs: list[Path]) -> set[Path]:
@@ -124,6 +178,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path, help="local 4 KiB-block FMD1 menu archive")
     parser.add_argument("--fm1-root", type=Path, required=True)
+    parser.add_argument("--sound-bank", type=Path,
+                        default=ROOT / "build/sound-bank/fm1_doom_sound_bank.c",
+                        help="private generated XIP shareware SFX bank source")
+    parser.add_argument("--music-bank", type=Path,
+                        default=ROOT / "build/music-bank/music_score.c",
+                        help="private generated XIP E1M1 music bank source")
     args = parser.parse_args()
     out = ROOT / "build/target-candidate"
     out.mkdir(parents=True, exist_ok=True)
@@ -149,6 +209,15 @@ def main() -> int:
         parser.error("archive must use 4 KiB FMD1 blocks and fit the 192 KiB app-data cap")
     if not unpack(source).startswith(b"IWAD"):
         parser.error("FMD1 payload is not an IWAD")
+    private_banks = {
+        "sound": (args.sound_bank.resolve(), "fm1_doom_sound_bank"),
+        "music": (args.music_bank.resolve(), "fm1_doom_music_score"),
+    }
+    bank_payloads = {}
+    for name, (path, symbol) in private_banks.items():
+        if not path.is_file():
+            parser.error(f"generate the private {name} bank before linking: {path}")
+        bank_payloads[name] = generated_xip_bytes(path, symbol)
 
     base = fm1 / "firmware/nes/build/boot-stock-power-smb1"
     if not (base / "sdk.ld").is_file() or not (base / "sdk.used").is_file():
@@ -180,6 +249,24 @@ def main() -> int:
     source_closure = set(common_configuration + [ROOT / "tools/build_target_candidate.py",
                          ROOT / "tools/compile_target_engine.py", ROOT / "tools/compile_target_port.py",
                          usb / "vendor_overlay.py"])
+    source_closure.update(ROOT / "tools" / name
+                          for name in ("make_sound_bank.py", "make_music_score.py"))
+    for name, (path, _) in private_banks.items():
+        bank_manifest = path.parent / "manifest.json"
+        if bank_manifest.is_file():
+            metadata = json.loads(bank_manifest.read_text(encoding="utf-8"))
+            expected_source = metadata.get("generated_source_sha256")
+            if expected_source and expected_source not in (
+                    hashlib.sha256(path.read_bytes()).hexdigest(),
+                    hashlib.sha256(path.read_text(encoding="utf-8").encode()).hexdigest()):
+                raise ValueError(f"private generated bank differs from its manifest: {path}")
+            if name == "music" and metadata.get("score_sha256") != hashlib.sha256(bank_payloads[name]).hexdigest():
+                raise ValueError("private music score bytes differ from the roundtrip manifest")
+            if name == "music" and metadata.get("roundtrip_verified") is not True:
+                raise ValueError("private music score has no verified event roundtrip")
+            if name == "sound" and metadata.get("payload_bytes") != len(bank_payloads[name]):
+                raise ValueError("private sound bank size differs from its manifest")
+            source_closure.add(bank_manifest)
     for obj in engine_objects:
         source_path = generated / obj.name.removesuffix(".o")
         source_closure.update(check_object_freshness(obj, source_path, dependency_includes,
@@ -216,10 +303,23 @@ def main() -> int:
                ROOT / "src/fm1_doom_target.c",
                ROOT / "src/fm1_doom_target_io.c",
                ROOT / "src/fm1_doom_target_libc.c",
+               ROOT / "src/fm1_doom_printf.c",
                fm1 / "firmware/nes/boot/display_test.c",
                fm1 / "firmware/nes/src/fm1_wl82_keyscan.c",
                fm1 / "firmware/nes/src/fm1_stock_keys.c", blob]
     sources += [ROOT / "src/fm1_doom_usb.c", ROOT / "src/fm1_doom_usb_protocol.c"]
+    audio_source = ROOT / "src/fm1_doom_sound.c"
+    audio_text = audio_source.read_text(encoding="utf-8")
+    for statement in ("memset(&audio_pd, 0, sizeof(audio_pd));",
+                      "audio_pd.port_sel = IIS_PORTC;",
+                      "audio_pd.channel_out = audio_pd.data_width = 8;",
+                      "audio_pd.sr_points = 128;",
+                      "rc = iis_open(&audio_pd, 0);"):
+        if audio_text.count(statement) != 1:
+            raise ValueError("audio platform configuration differs from the measured IIS allocation")
+    sources += [audio_source, ROOT / "src/fm1_doom_music.c",
+                fm1 / "firmware/nes/src/fm1_audio_queue.c"]
+    sources += [path for path, _ in private_banks.values()]
     sources += [usb / name for name in ("descriptors.c", "usb_policy.c", "dma.c",
                                        "rx_channel.c", "boot_entry.c")]
     sources.append(sdk / "apps/common/usb/usb_config.c")
@@ -243,6 +343,13 @@ def main() -> int:
                 "cdc_write_data", "fm1_cdc_ready", "fm1_usb_device_descriptor",
                 "fm1_usb_config_descriptor", "fm1_usb_rx_irq", "go_mask_usb_updata",
                 "nvram_set_boot_state", "fm1_wl82_keyscan_async_raw", "jiffies_half_msec"]
+    retained += ["fm1_sound_module", "fm1_music_module", "fm1_doom_sound_init",
+                 "fm1_doom_sound_shutdown", "iis_open", "iis_close", "iis_irq_handler",
+                 "iis_set_dec_data_handler", "iis_set_sample_rate", "iis_channel_on",
+                 "iis_channel_off", "fm1_doom_sound_bank", "fm1_doom_sound_entries",
+                 "fm1_doom_sound_entry_count", "fm1_doom_sound_bank_bytes",
+                 "fm1_doom_music_score", "fm1_doom_music_score_len"]
+    retained += ["sprintf", "snprintf", "vsprintf", "vsnprintf", "print", "printf", "vprintf", "perror"]
     used.write_text(used.read_text() + "\n" + "\n".join(retained) + "\n")
     ld = (out / "sdk.ld").read_text()
     for old, new in (("*(.data)", "*(.data .data.*)"), ("*(.bss)", "*(.bss .bss.*)")):
@@ -266,9 +373,23 @@ def main() -> int:
                  "-S", "-emit-llvm", str(obj), "-o", str(ir)])
             usb_ir[path.name] = ir.read_text()
     usb_allocations = usb_heap_allocations(usb_ir["fm1-cdc.c"], usb_ir["usb_config.c"])
+    cpu_library = sdk / "cpu/wl82/liba/cpu.a"
+    iis_object = out / "iis-driver-audit.o"
+    extracted = subprocess.run([str(board.TC / "llvm-ar.exe"), "p", str(cpu_library), "iis.c.o"],
+                               capture_output=True)
+    if extracted.returncode or not extracted.stdout.startswith(b"BC\xc0\xde"):
+        raise ValueError("cannot extract the pinned IIS driver bitcode for allocation measurement")
+    iis_object.write_bytes(extracted.stdout)
+    iis_ir = out / "iis-driver-allocations.ll"
+    run([str(board.TC / "clang.exe"), "-x", "ir", "-target", "pi32v2", "-S", "-emit-llvm",
+         str(iis_object), "-o", str(iis_ir)])
+    audio_allocations = iis_heap_allocations(iis_ir.read_text(encoding="utf-8"))
+    source_closure.update((cpu_library, iis_object, iis_ir))
     task_budget = task_heap_budget((ROOT / "src/fm1_doom_target.c").read_text(encoding="utf-8"),
-                                   usb_allocations["total_requested_bytes"])
+                                   usb_allocations["total_requested_bytes"],
+                                   audio_allocations["total_requested_bytes"])
     task_budget["usb_allocations"] = usb_allocations
+    task_budget["audio_allocations"] = audio_allocations
 
     libs = [sdk / "include_lib/newlib/pi32v2-lib" / name
             for name in ("libm.a", "libc.a", "libcompiler_rt.a")]
@@ -319,6 +440,25 @@ def main() -> int:
     image_offset = image_vma - text_vma
     if parts[0][image_offset:image_offset + len(source)] != source:
         raise ValueError("embedded flash bytes differ from the validated FMD1 archive")
+    bank_link_info = {}
+    for name, (path, symbol) in private_banks.items():
+        match = re.search(r"^([0-9a-fA-F]+)\s+[A-Za-z]\s+" + re.escape(symbol) + r"$", nm, re.M)
+        if not match:
+            raise ValueError(f"private bank symbol is missing: {symbol}")
+        address = int(match.group(1), 16)
+        offset = address - text_vma
+        payload = bank_payloads[name]
+        if not 0 <= offset <= text_size - len(payload):
+            raise ValueError(f"private bank is outside XIP text: {symbol}")
+        if parts[0][offset:offset + len(payload)] != payload:
+            raise ValueError(f"linked private bank bytes differ from their generated source: {symbol}")
+        bank_link_info[name] = {"source": str(path), "bytes": len(payload),
+                                "sha256": hashlib.sha256(payload).hexdigest(), "flash_vma": address}
+    for symbol in ("fm1_doom_sound_entries", "fm1_doom_sound_entry_count", "fm1_doom_sound_bank_bytes",
+                   "fm1_doom_music_score_len"):
+        match = re.search(r"^([0-9a-fA-F]+)\s+[A-Za-z]\s+" + symbol + r"$", nm, re.M)
+        if not match or not text_vma <= int(match.group(1), 16) < text_vma + text_size:
+            raise ValueError(f"private sound metadata is outside XIP text: {symbol}")
     application = out / "fm1-doom-candidate.app.bin"
     application.write_bytes(b"".join(parts))
     heap = {name: int(addr, 16) for addr, name in re.findall(
@@ -330,7 +470,7 @@ def main() -> int:
         raise ValueError("candidate exceeds flash or static RAM")
     if heap_bytes < task_budget["required_linker_heap_bytes"]:
         raise ValueError(f"candidate linker heap {heap_bytes} is below the reviewed startup requirement {task_budget['required_linker_heap_bytes']}")
-    task_budget["runtime_reserve_after_reviewed_startup_bytes"] = heap_bytes - task_budget["minimum_task_heap_bytes"] - task_budget["reviewed_init_allowance_bytes"] - task_budget["usb_dynamic_heap_bytes"]
+    task_budget["runtime_reserve_after_reviewed_startup_bytes"] = heap_bytes - task_budget["minimum_task_heap_bytes"] - task_budget["reviewed_init_allowance_bytes"] - task_budget["usb_dynamic_heap_bytes"] - task_budget["audio_dynamic_heap_bytes"]
     uboot_app = out / "app.bin"
     uboot_app.write_bytes(application.read_bytes())
     if uboot_app.read_bytes() != b"".join(parts):
@@ -354,6 +494,9 @@ def main() -> int:
         "ram0_bss_bytes": sections.get(".ram0_bss", (0, 0))[0],
         "linked_heap_bytes_before_runtime": heap_bytes,
         "startup_heap_budget": task_budget,
+        "audio": {"output": "IIS_PORTC ALINK0 channel 3 signed 24-bit stereo at 44100 Hz",
+                  "sfx_voices": 2, "private_xip_banks": bank_link_info,
+                  "dynamic_dma_bytes": audio_allocations["total_requested_bytes"]},
         "usb_controller": 0,
         "usb_recovery": "CDC status, cooperative stop and guarded IRQ-context UBOOT entry",
         "keyscan_mode": "DMA2 IRQ with 1 ms pacing",

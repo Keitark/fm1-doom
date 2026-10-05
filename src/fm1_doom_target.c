@@ -9,6 +9,7 @@
 #include "system/spinlock.h"
 #include "generic/jiffies.h"
 #include "os/os_api.h"
+#include "os/FreeRTOS/task.h"
 #include "asm/clock.h"
 #include "asm/wdt.h"
 
@@ -22,6 +23,8 @@
 #include "fm1_doom_target_io.h"
 #include "fm1_doom_wad_file.h"
 #include "fm1_doom_usb.h"
+#include "fm1_doom_sound.h"
+#include "fm1_doom_music.h"
 #include "doomgeneric.h"
 #include <stdarg.h>
 #include <stdio.h>
@@ -38,7 +41,7 @@ const struct task_info task_info_table[] = {
     {"sys_event", 29, 512, 0},
     {"systimer", 14, 256, 0},
     {"sys_timer", 9, 512, 128},
-    {"doom_usb", 11, 2048, 0},
+    {"doom_usb", 11, 1024, 0}, /* 4 KiB; bounded status output plus stack telemetry. */
     {"fm1_doom", 10, 2048, 0}, /* SDK stack size is in 32-bit words: 8 KiB. */
     {0, 0, 0, 0, 0},
 };
@@ -69,6 +72,9 @@ static void scan_stop(void);
 
 void fm1_doom_usb_get_status(struct fm1_doom_usb_status *status)
 {
+    fm1_doom_sound_diagnostics sound;
+    fm1_doom_music_diagnostics music;
+    unsigned flags;
     status->stage = fm1_doom_stage;
     status->frames = fm1_doom_frames;
     status->fault = fm1_doom_fault;
@@ -99,6 +105,28 @@ void fm1_doom_usb_get_status(struct fm1_doom_usb_status *status)
     status->scan_failure_dma_count = scanner.failure.dma_count;
     status->coarse_gameplay = fm1_doom_active_port()
         ? fm1_doom_active_port()->coarse_gameplay : 0;
+    /* Copy bounded scalar audio state while holding its shared IRQ lock.
+       No formatting, allocation or device access occurs in this section. */
+    flags = fm1_doom_sound_lock();
+    fm1_doom_sound_get_diagnostics(&sound);
+    fm1_doom_music_get_diagnostics(&music);
+    status->music_playing = fm1_doom_music_is_playing();
+    fm1_doom_sound_unlock(flags);
+    status->audio_ready = sound.ready;
+    status->audio_error = sound.error;
+    status->audio_irqs = sound.irq_count;
+    status->audio_frames = sound.output_frames;
+    status->sfx_started = sound.sfx_started;
+    status->sfx_voices = sound.active_voices;
+    status->max_audio_irq_us = sound.max_irq_us;
+    status->music_ticks = music.ticks;
+    status->music_events = music.events;
+    status->music_loops = music.loops;
+    status->music_steals = music.voice_steals;
+    status->music_errors = music.errors;
+    status->music_voices = music.active_voices;
+    /* This getter runs on doom_usb; FreeRTOS reports unused stack words. */
+    status->usb_stack_words = uxTaskGetStackHighWaterMark(NULL);
 }
 
 void fm1_doom_usb_request_stop(void) { stop_requested = 1; }
@@ -109,6 +137,7 @@ void __attribute__((noreturn)) fm1_doom_target_fatal(const char *format, va_list
     vsnprintf(fm1_doom_error_message, sizeof(fm1_doom_error_message), format, args);
     if (!fm1_doom_fault) fm1_doom_fault = -30;
     fm1_doom_stage = 0xff;
+    fm1_doom_sound_shutdown();
     trace_phase = 5;
     scan_stop();
     fm1_display_test_stop();
@@ -308,7 +337,7 @@ static void sleep_ms(void *unused, uint32_t milliseconds)
 static void fm1_doom_task(void *unused)
 {
     static char *argv[] = {"fm1doom", "-iwad", "doom1.wad", "-warp", "1",
-                           "-skill", "1", "-nomusic", "-nosfx", "-nogui", 0};
+                           "-skill", "1", "-nogui", 0};
     fm1_doom_io io = {0, read_keys, write_rows, ticks_ms, sleep_ms};
     uint8_t *cache;
     size_t cache_len;
@@ -334,7 +363,7 @@ static void fm1_doom_task(void *unused)
     if (fm1_doom_bind_io(&io)) { fm1_doom_fault = -12; goto failed_keys; }
     if (stop_requested) goto failed_keys;
     fm1_doom_stage = 3;
-    doomgeneric_Create(10, argv);
+    doomgeneric_Create(8, argv);
     fm1_doom_stage = 4;
     while (!fm1_doom_fault && !stop_requested) {
         ++trace_tick_entered;
@@ -346,6 +375,7 @@ static void fm1_doom_task(void *unused)
         os_time_dly(0);
     }
 failed_keys:
+    fm1_doom_sound_shutdown();
     scan_stop();
 failed_display:
     fm1_display_test_stop();
