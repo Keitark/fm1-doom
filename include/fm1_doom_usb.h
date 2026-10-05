@@ -23,6 +23,7 @@ struct fm1_doom_usb_status {
     uint32_t max_audio_irq_us;
     uint32_t volume_raw, volume_gain, volume_valid, volume_errors;
     uint32_t synth_mode;
+    int heap_free;
 };
 
 void fm1_doom_usb_get_status(struct fm1_doom_usb_status *status);
@@ -81,6 +82,7 @@ typedef struct {
     size_t (*frame_read)(void *context, uint32_t offset, uint8_t *out, size_t capacity);
     void (*frame_end)(void *context);
     void (*frame_tick)(void *context, uint32_t now_ms);
+    int (*get_heap_free)(void *context);
 } fm1_doom_usb_protocol_io;
 
 void fm1_doom_usb_protocol_reset(fm1_doom_usb_protocol *protocol);

@@ -8,7 +8,7 @@
 
 typedef struct {
     char output[8192];
-    unsigned used, stop_requests, arm_calls, frame_ends, frame_reads;
+    unsigned used, stop_requests, arm_calls, frame_ends, frame_reads, heap_queries;
     int stopped, drained, arm_result;
     struct fm1_doom_usb_status status;
     struct fm1_doom_usb_game game;
@@ -28,6 +28,12 @@ static void capture(void *context, const char *text)
 static void get_status(void *context, struct fm1_doom_usb_status *status)
 {
     *status = ((fake_usb *)context)->status;
+}
+static int get_heap_free(void *context)
+{
+    fake_usb *fake = context;
+    ++fake->heap_queries;
+    return fake->status.heap_free;
 }
 
 static void request_stop(void *context) { ++((fake_usb *)context)->stop_requests; }
@@ -81,7 +87,8 @@ int main(void)
     fm1_doom_usb_protocol protocol;
     const fm1_doom_usb_protocol_io io = {
         &fake, capture, get_status, request_stop, is_stopped, tx_drained, boot_arm,
-        get_game, frame_begin, frame_info, frame_read, frame_end, frame_tick
+        get_game, frame_begin, frame_info, frame_read, frame_end, frame_tick,
+        get_heap_free
     };
     char overflow[FM1_DOOM_USB_LINE_BYTES + 16u];
     unsigned i;
@@ -105,6 +112,7 @@ int main(void)
     CHECK(strstr(fake.output, "stage=255 fault=-30 frames=37 stopped=0 lcd_stage=4 lcd_error=-2 key_error=-3 sys_hz=240000000 lsb_hz=60000000 error=bad SDK panic\n"));
     CHECK(!strchr(fake.output, '\r'));
     CHECK(strstr(fake.output + 1, "DOOM STATUS"));
+    CHECK(!fake.heap_queries);
 
     memset(&fake, 0, sizeof(fake));
     fake.status.now_ms = 12000;
@@ -172,12 +180,14 @@ int main(void)
     fake.status.volume_valid = 1;
     fake.status.volume_errors = UINT32_MAX;
     fake.status.synth_mode = 1;
+    fake.status.heap_free = INT32_MAX;
     feed(&protocol, "DOOM AU", 220, &io);
     CHECK(!fake.used);
     feed(&protocol, "DIO\n", 221, &io);
     CHECK(!strcmp(fake.output,
-          "DOOM AUDIO ready=1 error=-42 irqs=4294967295 frames=4294967295 sfx_started=4294967295 sfx_voices=2 music_playing=1 music_ticks=4294967295 music_events=4294967295 music_loops=4294967295 music_steals=4294967295 music_errors=4294967295 music_voices=8 usb_stack_words=500 max_irq_us=1000 volume_raw=1023 volume_gain=127 volume_valid=1 volume_errors=4294967295 synth_mode=1\n"));
+          "DOOM AUDIO ready=1 error=-42 irqs=4294967295 frames=4294967295 sfx_started=4294967295 sfx_voices=2 music_playing=1 music_ticks=4294967295 music_events=4294967295 music_loops=4294967295 music_steals=4294967295 music_errors=4294967295 music_voices=8 usb_stack_words=500 max_irq_us=1000 volume_raw=1023 volume_gain=127 volume_valid=1 volume_errors=4294967295 synth_mode=1 heap_free=2147483647\n"));
     CHECK(fake.used < 510 && !fake.stop_requests && !fake.arm_calls);
+    CHECK(fake.heap_queries == 1);
     feed(&protocol, "DOOM AUDIO\r\n", 222, &io);
     CHECK(strstr(fake.output, "ERR LINE ABORTED\n"));
 

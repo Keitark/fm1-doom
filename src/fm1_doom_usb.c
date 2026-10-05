@@ -9,6 +9,9 @@
 
 extern int fm1_cdc_ready(usb_dev id);
 extern volatile unsigned fm1_cdc_generation;
+/* Pinned SDK global allocator query; called only for an explicit AUDIO
+ * request, outside the audio lock. It walks allocator metadata under lock. */
+extern int get_malloc_remain_heap_size(void);
 
 volatile uint32_t fm1_doom_usb_stage, fm1_doom_usb_heartbeat, fm1_doom_usb_tx_dropped;
 volatile int fm1_doom_usb_error;
@@ -69,6 +72,8 @@ static void frame_end(void *context)
 { (void)context; fm1_doom_usb_frame_end(); }
 static void frame_tick(void *context, uint32_t now)
 { (void)context; fm1_doom_usb_frame_tick(now); }
+static int get_heap_free(void *context)
+{ (void)context; return get_malloc_remain_heap_size(); }
 
 void __attribute__((noinline, used)) fm1_doom_usb_task(void *argument)
 {
@@ -77,7 +82,8 @@ void __attribute__((noinline, used)) fm1_doom_usb_task(void *argument)
     uint32_t last = 0;
     const fm1_doom_usb_protocol_io io = {
         0, reply, get_status, request_stop, is_stopped, tx_drained, boot_arm,
-        get_game, frame_begin, frame_info, frame_read, frame_end, frame_tick
+        get_game, frame_begin, frame_info, frame_read, frame_end, frame_tick,
+        get_heap_free
     };
     (void)argument;
     fm1_doom_usb_stage = 1;

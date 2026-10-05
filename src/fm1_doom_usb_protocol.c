@@ -153,8 +153,9 @@ USB_NOINLINE void fm1_doom_usb_protocol_audio(const fm1_doom_usb_protocol_io *io
     char output[512];
     memset(&status, 0, sizeof(status));
     io->get_status(io->context, &status);
+    if (io->get_heap_free) status.heap_free = io->get_heap_free(io->context);
     snprintf(output, sizeof(output),
-             "DOOM AUDIO ready=%d error=%d irqs=%lu frames=%lu sfx_started=%lu sfx_voices=%lu music_playing=%lu music_ticks=%lu music_events=%lu music_loops=%lu music_steals=%lu music_errors=%lu music_voices=%lu usb_stack_words=%lu max_irq_us=%lu volume_raw=%lu volume_gain=%lu volume_valid=%lu volume_errors=%lu synth_mode=%lu\n",
+             "DOOM AUDIO ready=%d error=%d irqs=%lu frames=%lu sfx_started=%lu sfx_voices=%lu music_playing=%lu music_ticks=%lu music_events=%lu music_loops=%lu music_steals=%lu music_errors=%lu music_voices=%lu usb_stack_words=%lu max_irq_us=%lu volume_raw=%lu volume_gain=%lu volume_valid=%lu volume_errors=%lu synth_mode=%lu heap_free=%d\n",
              status.audio_ready, status.audio_error,
              (unsigned long)status.audio_irqs, (unsigned long)status.audio_frames,
              (unsigned long)status.sfx_started, (unsigned long)status.sfx_voices,
@@ -165,7 +166,7 @@ USB_NOINLINE void fm1_doom_usb_protocol_audio(const fm1_doom_usb_protocol_io *io
              (unsigned long)status.max_audio_irq_us,
              (unsigned long)status.volume_raw, (unsigned long)status.volume_gain,
              (unsigned long)status.volume_valid, (unsigned long)status.volume_errors,
-             (unsigned long)status.synth_mode);
+             (unsigned long)status.synth_mode, status.heap_free);
     io->reply(io->context, output);
 }
 

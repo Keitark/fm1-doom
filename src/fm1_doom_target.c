@@ -45,7 +45,7 @@ const struct task_info task_info_table[] = {
     {"sys_event", 29, 512, 0},
     {"systimer", 14, 256, 0},
     {"sys_timer", 9, 512, 128},
-    {"doom_usb", 11, 1024, 0}, /* 4 KiB; bounded status output plus stack telemetry. */
+    {"doom_usb", 11, 768, 0}, /* 3 KiB; emitted diagnostic gate plus live high-water. */
     {"fm1_doom", 10, 2048, 0}, /* SDK stack size is in 32-bit words: 8 KiB. */
     {0, 0, 0, 0, 0},
 };

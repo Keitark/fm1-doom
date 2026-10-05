@@ -16,6 +16,8 @@ def fields(line):
 
 
 def request(port, command, prefix, deadline):
+    if time.monotonic() >= deadline:
+        raise TimeoutError(f"No {prefix} reply before capture deadline")
     port.write((command + "\n").encode("ascii"))
     pending = bytearray()
     while time.monotonic() < deadline:
@@ -31,8 +33,25 @@ def request(port, command, prefix, deadline):
     raise TimeoutError(f"No {prefix} reply before capture deadline")
 
 
+def startup_handshake(port, deadline):
+    # Opening CDC/DTR resets the receive generation. Give it time to settle,
+    # then retry only the read-only identity command if its first reply is lost.
+    time.sleep(min(1, max(0, deadline - time.monotonic())))
+    for _ in range(3):
+        if time.monotonic() >= deadline:
+            break
+        try:
+            request(port, "HELLO", "FM1DIAG/1 DOOM-FM1/1 ",
+                    min(deadline, time.monotonic() + 1))
+            return
+        except TimeoutError:
+            pass
+    raise TimeoutError("No Doom HELLO reply before startup deadline")
+
+
 def capture(port):
     deadline = time.monotonic() + 12
+    startup_handshake(port, deadline)
     game = fields(request(port, "DOOM GAME", "DOOM GAME ", deadline))
     try:
         request(port, "DOOM FRAME BEGIN", "OK DOOM FRAME ", deadline)
