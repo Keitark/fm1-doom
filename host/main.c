@@ -17,6 +17,7 @@ static fm1_fmd_t archive;
 static LARGE_INTEGER perf_frequency;
 static LONGLONG inflate_ticks;
 extern int menuactive;
+void G_ExitLevel(void);
 
 typedef int (__cdecl *uncompress_fn)(unsigned char *, unsigned long *,
                                       const unsigned char *, unsigned long);
@@ -147,8 +148,17 @@ int main(int argc, char **argv)
     doom_argv[7] = "-nomusic"; doom_argv[8] = "-nosfx";
     doom_argv[9] = "-mb"; doom_argv[10] = argc == 5 ? argv[4] : "6";
     doom_argv[11] = "-nogui"; doom_argv[12] = NULL;
+    if (getenv("FM1_DOOM_HOST_VIRTUAL_IWAD")) {
+        if (!archive_image) {
+            fprintf(stderr, "virtual IWAD smoke requires an FMD1 archive\n");
+            return 2;
+        }
+        fm1_doom_set_wad_archive("doom1.wad", &archive);
+        doom_argv[2] = "doom1.wad";
+    }
     doomgeneric_Create(12, doom_argv);
     for (i = 0; i < (unsigned)ticks; ++i) {
+        if (i == 20 && getenv("FM1_DOOM_HOST_EXIT_TEST")) G_ExitLevel();
         if (menu_script) {
             scripted_keys = i >= 4 && i < 15 ? UINT64_C(1) << 19 : 0;
             if (strcmp(menu_script, "open")) {

@@ -6,23 +6,23 @@ submodule at `dcb7a8dbc7a16ce3dda29382ac9aae9d77d21284`. Game assets are
 separate: bring a lawful IWAD such as the Doom shareware WAD or Freedoom. No
 WAD, stock firmware dump, device key, or flashable image is distributed here.
 
-**Status: compressed E1M1 host milestone, not a playable FM-1 firmware.** The engine
+**Status: linked, unflashed E1M1 application candidate; hardware behavior unverified.** The engine
 renders through a 320×200 indexed buffer into FM-1-sized 240×240 RGB565 strips,
 and the stock 41-slot key scanner is mapped to Doom key edges. A Windows host
 runner produced real gameplay frames with Freedoom Phase 1 and with an aggressively
-reduced Doom shareware E1M1 archive. The target adapter and archive reader
-compile for pi32v2. Diagnostic SDK links can omit the NES app but still use
-nonfunctional file shims; a real Doom application has not been linked, connected to the
-physical LCD/key scanner, or run on the device.
+reduced Doom shareware E1M1 archive. A real SDK Doom task, XIP-embedded
+compressed archive, LCD strip output, and SPI2 key scanner now link for pi32v2.
+They have not run on the physical device; audio and 30 FPS acceptance remain open.
 See [PORT_STATUS.md](PORT_STATUS.md) and [issue #1](https://github.com/Keitark/fm1-doom/issues/1).
 
 An experimental 160×100 direct-E1M1 build renders gameplay as exact 8×8 LCD
 blocks and scales the original Doom menu images to fit the screen. The menu
 offers New Game and graphic detail, with no custom menu text. Its archive is
 117,590 B with a 4 KiB decode cache; a 32-bit host exercised the menu at a
-296 KiB Doom zone. The offline size arithmetic fits the stock flash allocation and
-nominal SRAM, but excludes the real SDK task, stack, decoder scratch, and board
-bindings. See the [reproduction and limits](LOW_MEMORY_EXPERIMENT.md).
+296 KiB Doom zone. The offline candidate including the SDK task and board
+bindings fits the stock app allocation and nominal SRAM, while runtime stack,
+heap, decoder scratch, and physical behavior remain unverified. See the
+[target candidate](TARGET_CANDIDATE.md) and [low-memory profile](LOW_MEMORY_EXPERIMENT.md).
 
 ## Build and test on Windows
 
@@ -131,15 +131,12 @@ project. They still need gameplay acceptance on the physical key matrix.
 
 ## Why this is not ready to install
 
-The stock V15 app allocation is 602,112 B. The direct-E1M1 Doom-only size
-probe has 363,344 B of app sections before data; adding the 117,590 B archive
-gives 480,934 B. It links a fixed 296 KiB target zone and 4 KiB archive cache
-with 477,416 B total static RAM, leaving a 46,124 B linked heap span. The
-probe's `app_main`
-does not start Doom and its file shims are nonfunctional. Stacks, SDK heap,
-decompressor scratch, flash placement, and real board services are not yet
-accounted for. A full Freedoom WAD still needs far more memory. Audio, SDK
-task integration, image packaging, rollback, and bench acceptance remain open.
+The stock V15 app allocation is 602,112 B. The offline E1M1 candidate,
+including its compressed archive, is 482,448 B. It includes a fixed 296 KiB
+Doom zone and 4 KiB archive cache. Static RAM is 475,224 B, leaving a 48,332 B
+linked heap span before the task stack and runtime allocations. A full Freedoom
+WAD still needs far more memory. Sound, image packaging, rollback, runtime
+memory verification, and bench acceptance remain open.
 See the exact gates in [PORT_STATUS.md](PORT_STATUS.md).
 The hardware goal is 30 completed LCD gameplay frames/s; see
 [PERFORMANCE_TARGET.md](PERFORMANCE_TARGET.md) for the measurement contract.

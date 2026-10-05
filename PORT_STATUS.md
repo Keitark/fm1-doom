@@ -24,9 +24,10 @@
 | Offline SDK+Doom size probe, adapter rooted | Links; app sections 434,384 B without WAD; `.ram0_data` 68,048 B and `.ram0_bss` 342,080 B | Retains NES app and uses nonfunctional libc shims; not runnable Doom firmware |
 | Experimental 160×100 size probe | Links; 433,296 B app sections before WAD, 343,088 B static RAM | Same probe limitations; selected archive makes 624,830 B before integration |
 | Direct-E1M1 Doom-only size probe | Links without NES app; 363,888 B app sections before WAD; fixed 296 KiB zone and 4 KiB cache included in 477,656 B static RAM; 45,900 B linked heap span | Empty `app_main`, nonfunctional libc shims; not bootable Doom |
-| Current menu Doom-only size probe | Links without NES app; 363,344 B app sections before WAD; 477,416 B static RAM; 46,124 B linked heap span; 480,934 B app plus FMD1 | Same probe limitations; not bootable Doom |
+| Current menu Doom-only size probe | Links without NES app; 361,072 B app sections before WAD; 470,728 B static RAM; 52,812 B linked heap span; 478,662 B app plus FMD1 | Inert app and unsupported libc; size baseline only |
+| Offline real Doom application candidate | Links SDK task, XIP FMD1, stock LCD and SPI2 scanner: 482,448 B app, 475,224 B static RAM, 48,332 B linked heap span | Raw app only; no device run, sound, update package, or runtime heap proof |
 | Current eight-row host output | 4,860 callbacks over 120 ticks; exact image hash match with four-row output | No hardware timing or FPS result |
-| FM-1 boot, LCD, keys, audio | Not attempted | No installable image |
+| FM-1 boot, LCD, keys, audio | Physical test not attempted | No installable update package |
 
 The first smoke used Freedoom 0.13.0 `freedoom1.wad` from the project's official
 [release](https://github.com/freedoom/freedoom/releases/tag/v0.13.0), stored
@@ -58,29 +59,26 @@ The [RP2040 Doom port](https://github.com/kilograham/rp2040-doom) demonstrates
 that a reworked original engine can fit 264 KiB of RAM by keeping immutable
 level data in flash. Its [memory notes](https://kilograham.github.io/rp2040-doom/speed_and_ram.html)
 describe why a straight Chocolate Doom build does not fit. The current
-direct-E1M1 menu FMD1 archive is 117,590 B with a 4 KiB cache; the reader has not
-been bound to physical flash. The Doom-only probe's 363,344 B app sections
-plus this archive total 480,934 B, below the stock V15 602,112 B app
-allocation. Its fixed 296 KiB zone and 4 KiB archive cache are already in
-the 477,416 B static RAM count. The linker reports a 46,124 B heap span.
-This does not prove a real build fits: task stacks, SDK heap, zliblite scratch,
-board services, and protected flash layout are still missing. The probe's
-empty `app_main` and libc shims prevent Doom from running.
+direct-E1M1 menu FMD1 archive is 117,590 B with a 4 KiB cache. The current
+candidate embeds it into read-only XIP flash and verifies the exact bytes in
+the extracted app image. The candidate's app is 482,448 B, below the stock V15
+602,112 B allocation. Its fixed 296 KiB zone and 4 KiB cache are included in
+475,224 B static RAM; the linker heap span is 48,332 B. This does not prove
+runtime fit: the 8 KiB task stack, SDK heap, decoder scratch, and physical
+flash behavior have not been measured. See [TARGET_CANDIDATE.md](TARGET_CANDIDATE.md).
 
 ## Required before calling this playable on FM-1
 
-1. Place the reduced FMD1 archive in a reviewed flash layout and prove bounded
-   random reads on the physical device, including corruption/error handling.
-2. Exercise the linked fixed zone under a real SDK Doom task; replace
-   probe-only libc shims and the inert app root,
-   then prove SRAM, stack, heap, and protected-flash budgets from the ELF and
-   image audit.
-3. Wire the existing board LCD, scanner, timer, USB/storage, and DAC services
-   to the callbacks in this repo; add responsive audio without ISR blocking.
+1. Verify boot and bounded XIP archive reads on the physical device, including
+   corruption and error handling.
+2. Exercise the fixed zone under the linked SDK Doom task and prove SRAM,
+   stack, heap, and protected-flash budgets from live diagnostics and the ELF.
+3. Qualify LCD, scanner and timer bindings; add responsive DAC audio and a
+   recovery/control channel without ISR blocking.
 4. Reproduce the host gameplay image through the LCD, then measure controls,
    frame rate, WAD latency, audio, battery behavior, and restart on the bench.
 5. Preserve the known-good installed v30 image, verify a candidate and restore
    plan, and perform any physical write only as a deliberate bench step.
 
-Until these gates pass, this repository contains source and an offline host
-preview only. No file here is a firmware update payload.
+Until these gates pass, this repository contains source and an offline raw app
+candidate only. No file here is a firmware update payload.

@@ -63,18 +63,14 @@ python tools/compile_target_port.py --fm1-root F:\dev\fm1 --lowres
 python tools/link_target_probe.py --fm1-root F:\dev\fm1 --lowres --doom-only
 ```
 
-The pinned SDK linker grants 523,596 B of `ram0`. The latest Doom-only probe
+The pinned SDK linker grants 523,596 B of `ram0`. The Doom-only size probe
 includes an actual fixed 296 KiB target zone and 4 KiB archive cache. It links
-with 28,112 B `.ram0_data` and 449,304 B `.ram0_bss`, totaling 477,416 B.
-The linked `_HEAP_BEGIN` to `_HEAP_END` span is 46,124 B before runtime
-allocations. Its app sections are 363,344 B before WAD. Adding the selected
-117,590 B archive gives 480,934 B against the stock 602,112 B app allocation.
-This is not a verified runtime memory budget: the probe's `app_main` does not
-start Doom, it uses nonfunctional libc shims, and target task stacks, SDK heap,
-decompressor scratch, flash mapping, and real board services are not accounted
-for. The zone size was chosen from a 32-bit Windows host run, not measured on
-the AC7911B8.
+with 28,112 B `.ram0_data` and 442,616 B `.ram0_bss`, totaling 470,728 B.
+The linked heap span is 52,812 B before runtime allocations. Its app sections
+are 361,072 B before WAD. Adding the selected 117,590 B archive gives 478,662 B
+against the stock 602,112 B app allocation. This remains a size-only probe.
 
-No FM-1 firmware image has been built or run. The remaining work includes a
-real SDK task, bounded reads from a protected flash placement, LCD/key/audio
-bindings, a full ELF and stack/heap audit, and physical 30 FPS telemetry.
+The [real SDK application candidate](TARGET_CANDIDATE.md) now links the local
+archive into XIP and connects the Doom task, LCD, and key scanner. It is an
+offline raw app image, not an update package or a verified runtime memory
+budget. Audio, physical bring-up, and 30 FPS telemetry remain open.

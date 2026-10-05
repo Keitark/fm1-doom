@@ -161,6 +161,11 @@ static void FM1_DrawPatchHalf(int x, int y, patch_t *patch)
                     "    if (fastparm || skill == sk_nightmare)\n"
                     "        I_Error(\"fast/nightmare mode is unavailable in FM-1 direct boot\");\n\n"
                     + source[end:], encoding="utf-8")
+    # The packaged first stage contains E1M1 only. Complete either exit by
+    # starting that map again; never enter the omitted intermission/E1M2 art.
+    replace_function(game, "void G_DoCompleted (void)",
+                     "void G_DoCompleted (void)\n{\n"
+                     "    G_DeferedInitNew(gameskill, 1, 1);\n}")
     replace_once(TARGET / "info.c", "state_t\tstates[NUMSTATES] =",
                  "const state_t states[NUMSTATES] =")
     replace_once(TARGET / "info.c", "mobjinfo_t mobjinfo[NUMMOBJTYPES] =",
@@ -190,6 +195,21 @@ static void FM1_DrawPatchHalf(int x, int y, patch_t *patch)
                  "short viewangletox[FINEANGLES/2];")
     replace_once(TARGET / "r_state.h", "extern int\t\tviewangletox[FINEANGLES/2];",
                  "extern short viewangletox[FINEANGLES/2];")
+    # The first-stage FM-1 profile has no writable filesystem. Use compiled
+    # defaults and avoid creating a save/config directory during boot.
+    replace_once(TARGET / "d_main.c", "    I_AtExit(M_SaveDefaults, false);",
+                 "    /* No writable config store in the FM-1 E1M1 profile. */")
+    replace_once(TARGET / "m_config.c",
+                 "    LoadDefaultCollection(&doom_defaults);\n    LoadDefaultCollection(&extra_defaults);",
+                 "    /* Keep the bound compiled defaults; no target config files. */")
+    replace_function(TARGET / "m_misc.c", "void M_MakeDirectory(char *path)",
+                     "void M_MakeDirectory(char *path)\n{\n"
+                     "    (void)path; /* No writable save/config store. */\n}")
+    replace_once(TARGET / "d_iwad.c", '#include "d_iwad.h"',
+                 '#include "d_iwad.h"\n#include "fm1_doom_wad_file.h"')
+    replace_once(TARGET / "d_iwad.c", "    if (M_FileExists(name))\n    {\n        return name;\n    }",
+                 "    if (fm1_doom_archive_matches(name)) return name;\n"
+                 "    if (M_FileExists(name))\n    {\n        return name;\n    }")
     print(TARGET)
     print("Experimental 160x100 engine generated with compact HUD and half-size Doom menu.")
 

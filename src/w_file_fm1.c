@@ -48,6 +48,12 @@ void fm1_doom_set_wad_archive(const char *path, fm1_fmd_t *archive)
     archive_file.file_class = &archive_class;
 }
 
+int fm1_doom_archive_matches(const char *path)
+{
+    return path && registered_path && registered_archive
+        && strcmp(path, registered_path) == 0;
+}
+
 wad_file_t *W_OpenFile(char *path)
 {
     wad_file_t *file = archive_class.OpenFile(path);
