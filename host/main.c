@@ -10,6 +10,7 @@
 static uint16_t frame[FM1_DOOM_WIDTH * FM1_DOOM_HEIGHT];
 static unsigned strips;
 static HMODULE zlib_module;
+static uint64_t scripted_keys;
 static uint8_t *archive_image;
 static uint8_t *archive_cache;
 static fm1_fmd_t archive;
@@ -61,7 +62,7 @@ static int load_archive(FILE *file, const char *path)
     return 0;
 }
 
-static uint64_t host_keys(void *unused) { (void)unused; return 0; }
+static uint64_t host_keys(void *unused) { (void)unused; return scripted_keys; }
 static int host_rows(void *unused, unsigned y, unsigned rows, const uint8_t *pixels)
 {
     unsigned i;
@@ -96,7 +97,7 @@ static int save_ppm(const char *path)
 int main(int argc, char **argv)
 {
     fm1_doom_io io = {0, host_keys, host_rows, host_ticks, host_sleep};
-    char *doom_argv[12];
+    char *doom_argv[13];
     long ticks, zone_mb;
     unsigned i;
     FILE *wad;
@@ -108,6 +109,18 @@ int main(int argc, char **argv)
     }
     wad = fopen(argv[1], "rb");
     if (!wad) { perror(argv[1]); return 2; }
+    {
+        const char *setting = getenv("FM1_DOOM_HOST_KEYS");
+        if (setting && *setting) {
+            char *end;
+            scripted_keys = _strtoui64(setting, &end, 0);
+            if (*end || (scripted_keys >> 41u)) {
+                fprintf(stderr, "FM1_DOOM_HOST_KEYS must be a 41-bit numeric mask\n");
+                fclose(wad);
+                return 2;
+            }
+        }
+    }
     {
         char magic[4];
         if (fread(magic, 1, 4, wad) != 4) { fclose(wad); return 2; }
@@ -123,8 +136,9 @@ int main(int argc, char **argv)
     doom_argv[3] = "-warp"; doom_argv[4] = "1";
     doom_argv[5] = "-skill"; doom_argv[6] = "1";
     doom_argv[7] = "-nomusic"; doom_argv[8] = "-nosfx";
-    doom_argv[9] = "-mb"; doom_argv[10] = argc == 5 ? argv[4] : "6"; doom_argv[11] = NULL;
-    doomgeneric_Create(11, doom_argv);
+    doom_argv[9] = "-mb"; doom_argv[10] = argc == 5 ? argv[4] : "6";
+    doom_argv[11] = "-nogui"; doom_argv[12] = NULL;
+    doomgeneric_Create(12, doom_argv);
     for (i = 0; i < (unsigned)ticks; ++i) doomgeneric_Tick();
     if (!strips || save_ppm(argv[3])) return 1;
     printf("Rendered %u LCD strips over %ld engine ticks to %s\n", strips, ticks, argv[3]);

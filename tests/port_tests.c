@@ -55,6 +55,13 @@ int main(void)
     keys = (UINT64_C(1) << 40);
     CHECK(fm1_doom_next_key(&port, &pressed, &key) && !pressed && key == KEY_LEFTARROW);
     CHECK(!fm1_doom_next_key(&port, &pressed, &key));
+    keys = (UINT64_C(1) << 19) | (UINT64_C(1) << 40);
+#if FM1_DOOM_SOURCE_WIDTH == 160 && FM1_DOOM_SOURCE_HEIGHT == 100
+    CHECK(!fm1_doom_next_key(&port, &pressed, &key)); /* no menu art */
+#else
+    CHECK(fm1_doom_next_key(&port, &pressed, &key) && pressed && key == KEY_ESCAPE);
+    CHECK(!fm1_doom_next_key(&port, &pressed, &key));
+#endif
     CHECK(fm1_doom_port_init(NULL, &io) == -1);
     puts("FM-1 palette, 240x240 strips, simultaneous key edges and release passed");
     return 0;

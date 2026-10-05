@@ -40,7 +40,8 @@ def main() -> int:
     for name in names:
         if name in SKIP:
             continue
-        result = subprocess.run([str(board.TC / "clang.exe"), *flags, *includes,
+        source_flags = ["-DI_ZoneBase=I_ZoneBase_Original"] if args.lowres and name == "i_system.c" else []
+        result = subprocess.run([str(board.TC / "clang.exe"), *flags, *source_flags, *includes,
                                  "-c", str(doom / name), "-o", str(out / (name + ".o"))],
                                 capture_output=True, text=True)
         if result.returncode:

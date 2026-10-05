@@ -37,7 +37,11 @@ def main() -> int:
     includes += ["-I" + str(board.sdk_path(item[2:])) for item in board.make_list(make_text, "INCLUDES")]
     out = ROOT / "build" / ("target-port-lowres" if args.lowres else "target-port")
     out.mkdir(parents=True, exist_ok=True)
-    for name in ("fm1_doom_port", "doomgeneric_fm1", "i_video_fm1", "fm1_doom_archive", "fm1_fmd_zliblite", "w_file_fm1"):
+    names = ["fm1_doom_port", "doomgeneric_fm1", "i_video_fm1",
+             "fm1_doom_archive", "fm1_fmd_zliblite", "w_file_fm1"]
+    if args.lowres:
+        names.append("i_zone_fm1")
+    for name in names:
         source = ROOT / "src" / (name + ".c")
         object_file = out / (name + ".o")
         subprocess.run([str(board.TC / "clang.exe"), *flags, *includes,

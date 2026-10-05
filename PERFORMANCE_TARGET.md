@@ -28,6 +28,7 @@ underruns. Measure p50/p95 frame intervals and each stage's busy time on the
 physical device. The host already reports archive decode counts and host
 inflate time, but those timings cannot predict the AC7911B's throughput.
 
-Current blocking prerequisites are a runnable low-memory engine, a reviewed
-flash layout, and an FM-1 LCD/clock task binding. No current build can be used
-to measure Doom FPS on hardware.
+The direct-E1M1 engine now passes a short 32-bit host smoke with a 296 KiB
+zone. Blocking prerequisites are a target allocator with measured stacks and
+decoder scratch, a reviewed flash layout, and an FM-1 LCD/clock task binding.
+No current build can be used to measure Doom FPS on hardware.

@@ -11,16 +11,17 @@ renders through a 320×200 indexed buffer into FM-1-sized 240×240 RGB565 strips
 and the stock 41-slot key scanner is mapped to Doom key edges. A Windows host
 runner produced real gameplay frames with Freedoom Phase 1 and with an aggressively
 reduced Doom shareware E1M1 archive. The target adapter and archive reader
-compile for pi32v2. A diagnostic SDK link retains the NES app and nonfunctional
-file shims; a real Doom application has not been linked, connected to the
+compile for pi32v2. Diagnostic SDK links can omit the NES app but still use
+nonfunctional file shims; a real Doom application has not been linked, connected to the
 physical LCD/key scanner, or run on the device.
 See [PORT_STATUS.md](PORT_STATUS.md) and [issue #1](https://github.com/Keitark/fm1-doom/issues/1).
 
-An experimental 160×100 build also renders the selected 8×8 E1M1 stage with a
-small health/ammo HUD. It completed 120 host ticks with a 448 KiB Doom zone;
-the [reproduction and limits](LOW_MEMORY_EXPERIMENT.md) are documented. The
-offline FM-1 size probe still exceeds the stock flash allocation and leaves
-insufficient RAM for that zone.
+An experimental 160×100 direct-E1M1 build renders the selected 8×8 assets
+with a small health/ammo HUD. Its no-UI archive is 79,785 B with a 4 KiB
+decode cache; a 32-bit host completed 300 moving ticks with a 296 KiB Doom
+zone. The offline size arithmetic now fits the stock flash allocation and
+nominal SRAM, but excludes the real SDK task, stack, decoder scratch, and board
+bindings. See the [reproduction and limits](LOW_MEMORY_EXPERIMENT.md).
 
 ## Build and test on Windows
 
@@ -79,6 +80,12 @@ For a host-only memory check, set `FM1_DOOM_ZONE_KIB` before running the host
 binary. The reduced E1M1 booted at 768 KiB; 640 KiB failed a 64,040-byte
 allocation. This test does not account for SDK, stack, or screen RAM.
 
+For a direct E1M1 first stage, add `--no-ui` to the stage command and use the
+generated 160×100 engine. This also removes menu, intermission, status, and
+text HUD graphics; it cannot support level completion or menus. The resulting
+WAD is 361,801 B and its 4 KiB block FMD1 archive is 79,785 B on the tested
+shareware input. `LOW_MEMORY_EXPERIMENT.md` has the exact build and run commands.
+
 With the clean pinned SDK and toolchain from the existing
 [FM-1 board project](https://github.com/Keitark/fm1-tracker), check pi32v2
 compilation of the port only:
@@ -90,14 +97,15 @@ python tools/compile_target_port.py --fm1-root F:\dev\fm1
 This never packages or flashes firmware. It does not compile the full Doom
 engine for the target or link zliblite into a firmware image. For deeper
 diagnostics, `tools/compile_target_engine.py` compiles the 79 engine files and
-`tools/link_target_probe.py` measures an offline SDK link. The probe retains
-the existing NES boot app and uses deliberately nonfunctional file-operation
-shims; it is never a firmware candidate.
+`tools/link_target_probe.py` measures an offline SDK link. The `--doom-only`
+option replaces the NES app with an inert probe root. Both modes use
+deliberately nonfunctional file-operation shims and are never firmware candidates.
 
 ## Port interfaces
 
-- `src/i_video_fm1.c` keeps the Doom renderer's indexed 320×200 framebuffer and
-  converts eight rows at a time. The caller consumes big-endian RGB565
+- `src/i_video_fm1.c` consumes the Doom renderer's indexed framebuffer (320×200
+  normally, 160×100 in the direct-E1M1 build) and converts eight LCD rows at a
+  time. The caller consumes big-endian RGB565
   pixels before each callback returns.
 - `src/fm1_doom_port.c` maps the stock scanner's measured slots to Doom keys and
   delivers all simultaneous press/release edges before polling again.
@@ -113,7 +121,7 @@ shims; it is never a firmware candidate.
 | 14, 17, 16, 18 | Left, forward, backward, right |
 | 40, 38 | Fire, use |
 | 15, 20 | Run, strafe modifier |
-| 19, 22 | Menu, enter |
+| 19, 22 | Menu, enter (slot 19 disabled in the no-UI build) |
 | 21, 23 | Weapons 1, 2 |
 
 The slot assignments use the recovered FM-1 scanner table from the board
@@ -121,17 +129,15 @@ project. They still need gameplay acceptance on the physical key matrix.
 
 ## Why this is not ready to install
 
-The FM-1 has 1 MiB of internal flash and roughly 500 KiB of application RAM.
-The compressed E1M1 data itself can fit in that flash. A corrected offline link
-probe that retains the FM-1 input/video adapter measured 434,384 bytes of app
-sections without assets. With the selected 191,534-byte archive this totals
-625,918 bytes, 23,806 bytes above the stock 602,112-byte app allocation. The
-probe retains NES and nonfunctional libc shims;
-this arithmetic does not prove a real Doom firmware will fit.
-On the host, a full Freedoom WAD needed more than a 1 MiB zone. The reduced
-E1M1 passed 768 KiB but failed at 640 KiB. A lower-memory engine architecture
-and a verified flash layout are required before a standalone device build is
-credible. Audio, SDK task integration, image packaging, rollback, and bench
-acceptance remain open. See the exact gates in [PORT_STATUS.md](PORT_STATUS.md).
+The stock V15 app allocation is 602,112 B. The direct-E1M1 Doom-only size
+probe has 363,888 B of app sections before data; adding the 79,785 B archive
+gives 443,673 B. It links a fixed 296 KiB target zone and 4 KiB archive cache
+with 477,656 B total static RAM, leaving a 45,900 B linked heap span. The
+probe's `app_main`
+does not start Doom and its file shims are nonfunctional. Stacks, SDK heap,
+decompressor scratch, flash placement, and real board services are not yet
+accounted for. A full Freedoom WAD still needs far more memory. Audio, SDK
+task integration, image packaging, rollback, and bench acceptance remain open.
+See the exact gates in [PORT_STATUS.md](PORT_STATUS.md).
 The hardware goal is 30 completed LCD gameplay frames/s; see
 [PERFORMANCE_TARGET.md](PERFORMANCE_TARGET.md) for the measurement contract.

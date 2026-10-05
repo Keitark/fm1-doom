@@ -75,6 +75,21 @@ def keep_first_map(lumps: list[Lump], map_name: bytes, silent: bool,
     return selected
 
 
+def omit_direct_boot_ui(lumps: list[Lump]) -> list[Lump]:
+    """Omit menu, intermission, status and text HUD art for the lowres build."""
+    output = []
+    namespace = b""
+    for lump in lumps:
+        if lump.name in (b"S_START", b"P_START", b"F_START"):
+            namespace = lump.name[:1]
+        elif lump.name in (b"S_END", b"P_END", b"F_END"):
+            namespace = b""
+        if not namespace and lump.name.startswith((b"M_", b"WI", b"ST")):
+            continue
+        output.append(lump)
+    return output
+
+
 def sprite_prefixes(map_things: bytes) -> set[bytes]:
     """Conservative sprite closure for map actors and their potential effects."""
     if len(map_things) % 10:
@@ -282,6 +297,8 @@ def main() -> None:
                         help="Also keep only map actor, weapon, and common effect sprites")
     parser.add_argument("--no-attract-art", action="store_true",
                         help="Drop title/help/credits images for direct E1M1 boot")
+    parser.add_argument("--no-ui", action="store_true",
+                        help="Drop menu/intermission/status/text art for the generated 160x100 direct-E1M1 build")
     parser.add_argument("--pixelate", type=int, choices=(1, 2, 4, 8, 16), default=1,
                         help="Coarsen patch/sprite/flat pixels while keeping logical dimensions")
     args = parser.parse_args()
@@ -296,6 +313,10 @@ def main() -> None:
         parser.error("--prune-sprites requires --prune-graphics")
     if args.prune_graphics:
         stage = prune_graphics(stage, map_name, args.prune_sprites, args.pixelate)
+    if args.no_ui:
+        if map_name != b"E1M1" or not args.no_attract_art:
+            parser.error("--no-ui requires --map E1M1 and --no-attract-art")
+        stage = omit_direct_boot_ui(stage)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     length = write_wad(args.output, stage)
     packed = len(zlib.compress(args.output.read_bytes(), 9))

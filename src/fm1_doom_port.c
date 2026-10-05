@@ -8,7 +8,10 @@ typedef struct { uint8_t slot, key; } key_binding;
    F-to-A group; fire/use use the far-right F/G pair. */
 static const key_binding bindings[] = {
     {14, KEY_LEFTARROW}, {15, KEY_RSHIFT}, {16, KEY_DOWNARROW},
-    {17, KEY_UPARROW}, {18, KEY_RIGHTARROW}, {19, KEY_ESCAPE},
+    {17, KEY_UPARROW}, {18, KEY_RIGHTARROW},
+#if FM1_DOOM_SOURCE_WIDTH != 160 || FM1_DOOM_SOURCE_HEIGHT != 100
+    {19, KEY_ESCAPE},
+#endif
     {20, KEY_RALT}, {21, '1'}, {22, KEY_ENTER},
     {23, '2'}, {38, KEY_USE}, {40, KEY_FIRE}
 };
