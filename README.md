@@ -132,14 +132,15 @@ deliberately nonfunctional file-operation shims and are never firmware candidate
 The slot assignments use the recovered FM-1 scanner table from the board
 project. They still need gameplay acceptance on the physical key matrix.
 
-## Why this is not ready to install
+## Limits of the UBOOT input
 
-The stock V15 app allocation is 602,112 B. The offline E1M1 candidate,
+The reviewed V14/v32 app slot is 584,956 B. The offline E1M1 candidate,
 including its compressed archive, is 482,448 B. It includes a fixed 296 KiB
 Doom zone and 4 KiB archive cache. Static RAM is 475,224 B, leaving a 48,332 B
 linked heap span before the task stack and runtime allocations. A full Freedoom
-WAD still needs far more memory. Sound, image packaging, rollback, runtime
-memory verification, and bench acceptance remain open.
+WAD still needs far more memory. The UBOOT `app.bin` input is ready, while sound,
+runtime memory verification, physical key/display behavior, and bench acceptance
+remain open.
 See the exact gates in [PORT_STATUS.md](PORT_STATUS.md).
 The hardware goal is 30 completed LCD gameplay frames/s; see
 [PERFORMANCE_TARGET.md](PERFORMANCE_TARGET.md) for the measurement contract.
