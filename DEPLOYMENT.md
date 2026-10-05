@@ -15,11 +15,16 @@ frame-counter increments per second. Instrument quality and mix balance are
 being checked. The requested 30 FPS target is not met; this is not a
 distinct-frame benchmark or a full E1M1 traversal.
 
-The newer `3318678` OPL/synth/knob build is installed and readback-verified,
+The newer `3318678` OPL/synth/knob build was installed and readback-verified,
 but the user reports no audio and restricted movement near spawn after cold
 boot. COM6 enumerates but requests time out. A compiled USB task stack overflow
-is confirmed and repaired in source; device installation of the repair and
-audio/map diagnosis are pending.
+was confirmed. The flashed `58b9ac4` repair restores USB stage 4 and frame
+capture, but audio reports an IIS initialization failure (`ready=0`,
+`error=-1`, `irqs=0`, `volume_valid=0`). The current `03492fc` allocation fix
+returns 1 KiB to the runtime heap and adds an explicit `heap_free` query.
+Its full flash readback matches, but HELLO fails after one reset while COM10
+enumerates. Cold-boot observation and physical audio/knob acceptance are pending;
+the reported map restriction still requires a capture at the stopping location.
 
 ## Graphics/input milestone artifacts
 
@@ -177,6 +182,64 @@ Separate audio interrupt stack usage is 384 B on a 4,096 B SSP. Runtime USB
 high-water, audio IRQ timing, knob and map capture still require device checks.
 
 The failed observation latch and its verified readback are preserved. A fresh
-protected writer session can use that readback as its baseline; its launcher
-requires a new Windows UAC approval. Serial UBOOT is unavailable while USB is
-broken, so the repair requires physical UBOOT entry.
+protected writer session used that readback as its baseline after Windows UAC
+approval. Physical UBOOT entry allowed the USB repair installation below.
+
+## USB repair installation and IIS diagnosis
+
+Revision `58b9ac4` wrote 136 changed sectors, `0x5000` through `0x8b000`, then
+directory sector `0x4000` last. Per-sector verification and one complete 1 MiB
+readback matched SHA-256
+`71a78229cec1355d89f95d0a361cfcc751f07571397c0acd28f95b1480d61e2d`.
+One reset succeeded. COM10 identified `DOOM-FM1/1`, stage 4, frames 112→146,
+with zero engine/LCD/key errors. Guarded serial STOP/UBOOT works again.
+
+Explicit audio status showed `ready=0`, `error=-1`, `irqs=0`, `frames=0` and
+`volume_valid=0`. IIS initialization fails before music, output callbacks or
+volume conversion run. The USB stack's minimum unused telemetry was 667 words,
+or 2,668 B, after successful physical frame capture. That capture showed the
+original spawn room, including its right-hand opening; it does not reproduce
+the user's reported stopping area.
+
+Protected session:
+`C:\Program Files\FM1FlashSession-576aa49beb9e4b4280a66275279ec22f`.
+
+- Deployment/readback: `runs/b038030ecf7b4e36a81121540c41ff06`.
+- Reset: `runs/500a7f68820f4184904bcba0a77c3d61`.
+- Observation: `runs/0ab8a7fa074b4677871d3a152ea9c11a`.
+- Guarded serial UBOOT: `runs/17e3a758a96544d5b19e941c669b34b8`.
+- Local diagnostics: ignored `build/target-candidate/usb-repair-live/`.
+- Local frame/palette capture: ignored `build/usb-frame/repair-screen.png`
+  and `repair-screen-source.png`.
+
+## Audio allocation installation: boot verification pending
+
+Revision `03492fc` produces a 555,024 B app, SHA-256
+`fb230df6e1d5bf6f13232551d26638a1caea01eb012a2a3b2a67c91e6cf8b246`.
+ELF SHA-256 is
+`b7df5e2aa2220091f801daa8177b418e642757ed5fdd291fac365beca171aa0d`.
+Static RAM remains 477,912 B and linker heap 45,644 B. Reducing USB task
+allocation from 4,096 to 3,072 B returns 1 KiB to that heap. Reviewed task
+minimum is 37,464 B and startup reserve 5,120 B before other allocations.
+The emitted diagnostic chain is 1,436 B; with 1,024 B SDK margin it leaves
+612 B in the USB allocation. Doom zone, archive cache and graphics are unchanged.
+
+Only explicit `DOOM AUDIO` requests query the SDK allocator outside the audio
+lock. `heap_free` is aggregate remaining space including metadata/uncommitted
+arena space; it is not largest-block or minimum-ever free heap evidence.
+Python 71/71, the native USB protocol contract, target link and all 424 frozen
+source/config/header hashes pass.
+
+The protected writer verified 136 changed sectors and one complete 1 MiB
+readback matching SHA-256
+`d2ed5405c1e1c24e8fc75bb77004d59e77a1d25035681953370a1e40a205ae76`.
+One reset completed. COM10 enumerates, but both the protected observation and
+a bounded read-only HELLO check failed. The observation failure latch remains
+intact; no reset or write retry was issued. A physical cold power cycle was
+requested. Cold-boot USB/audio/knob acceptance is pending.
+
+Receipts in the fresh session above:
+
+- Deployment/readback: `runs/45e85ac3f5a84c0ea0e8e3e239c76be8`.
+- Reset: `runs/b64ebe282c1d4c1da83fe4c2c7511e28`.
+- Failed observation: `runs/b2fa6288b2d249b1904db8939ac422c0`.

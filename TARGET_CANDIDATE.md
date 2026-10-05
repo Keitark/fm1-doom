@@ -12,9 +12,9 @@ Input failures release keys and retry with 50–1000 ms backoff while rendering
 continues, resetting the streak after one second of healthy sweeps. Engine errors, including LCD
 transfer failures, record a bounded RAM message and stop LCD/scanner/audio;
 USB status and serial UBOOT remain available. Audio initialization failure is
-nonfatal to rendering and is reported separately. Music and effects are now
-audible on the device; current audio shutdown and sound quality remain under
-review.
+nonfatal to rendering and is reported separately. The earlier `fc03a11` build
+was audible; the `58b9ac4` USB repair reported an IIS initialization failure.
+The latest allocation fix's boot and audio/knob acceptance remain pending.
 
 The first-stage game contains E1M1 only. Its original image menu offers New
 Game and graphic detail; completing E1M1 starts E1M1 again rather than entering
@@ -71,17 +71,23 @@ is recorded below. The generated file includes derived game
 data and is ignored by Git; keep it private. Check its size and SHA-256
 against the manifest before loading it in your UBOOT program.
 
-## USB stack repair candidate: not installed yet
+## Current audio allocation candidate: hardware verification pending
 
-The local app is 554,768 B, SHA-256
-`64194b06e5b372e0b671b690e04b7a90aad56a89fc59380ad055812f74a6e373`.
-It leaves 30,188 B in the reviewed application slot. The losslessly compacted
+Revision `03492fc` produces a 555,024 B app, SHA-256
+`fb230df6e1d5bf6f13232551d26638a1caea01eb012a2a3b2a67c91e6cf8b246`.
+ELF SHA-256 is
+`b7df5e2aa2220091f801daa8177b418e642757ed5fdd291fac365beca171aa0d`.
+It leaves 29,932 B in the reviewed application slot. The losslessly compacted
 archive is 170,505 B, SHA-256
 `9fca855cbab806ea279510666b13186dbb9aae16c615783dd21df03211f97dcd`.
 Private effect/score/GENMIDI banks are 12,613/10,975/563 B.
 Static RAM is 477,912 B (`.ram0_data` 26,896 B, `.ram0_bss` 451,016 B).
-The linker heap is 45,644 B, leaving exactly the required 4,096 B after the
-reviewed startup model. This is a static budget, not measured free runtime heap.
+The linker heap is 45,644 B. Reviewed tasks/queues/idle require 37,464 B,
+plus 800 B initialization, 1,236 B USB and 1,024 B IIS DMA allowances, leaving
+5,120 B before other allocations/padding. The USB task requests 768 SDK words,
+or 3,072 B, returning 1 KiB to the runtime heap. This is a static budget.
+An explicit `DOOM AUDIO` request reports aggregate remaining allocator space
+as `heap_free`; it does not measure the largest block or minimum-ever free heap.
 
 Unused FAT volume code is omitted; the three stock SDFILE configuration
 drivers and their 360-byte registration remain. The builder checks that
@@ -94,12 +100,21 @@ The prior 554,800 B revision `3318678` was installed with 136 changed sectors
 and a matching complete readback. The user then reported silence; USB failed
 after cold boot. Compiler inlining combined mutually exclusive reply buffers
 in a 3,192 B task frame; the status call chain exceeded its 4,096 B stack.
-The repair emits separate handlers, a 136 B task frame and a maximum 1,424 B
-diagnostic call chain. Its build gate reserves a further 1,024 B for reviewed
-SDK paths and rejects lost handler boundaries, unknown stack writes or nested
+The flashed `58b9ac4` repair emits separate handlers, a 136 B task frame and a
+maximum 1,424 B diagnostic call chain. Full readback SHA-256 is
+`71a78229cec1355d89f95d0a361cfcc751f07571397c0acd28f95b1480d61e2d`.
+USB observation reaches stage 4 with zero engine/LCD/key errors; frame capture
+works. IIS diagnostics show `ready=0`, `error=-1`, `irqs=0`, `volume_valid=0`.
+The current candidate's diagnostic chain is 1,436 B; its build gate reserves
+a further 1,024 B for reviewed SDK paths and rejects lost handler boundaries,
+unknown stack writes or nested
 diagnostic calls. This scoped gate does not replace live stack/heap acceptance.
-Physical repair installation, knob operation, IIS deadline, screen capture
-and sustained controls remain to be checked.
+The combined bound leaves 612 B in the 3,072 B task allocation. The current
+candidate's complete flash readback matches
+`d2ed5405c1e1c24e8fc75bb77004d59e77a1d25035681953370a1e40a205ae76`.
+One reset completed, but HELLO times out while COM10 enumerates. Cold-boot
+observation, physical audio/knob acceptance, IIS deadline and sustained controls
+remain to be checked.
 
 ## Historical installed audio application
 
@@ -212,7 +227,7 @@ physical movement/firing confirmation.
   the SDK binding. The builder validates every block of the final archive.
 - Physical boot, visible gameplay, sustained controls, both graphics views and
   serial UBOOT recovery are established for the historical 569,840 B image.
-  The installed 583,216 B image adds verified flash/readback/boot, audible
+  The historical 583,216 B image adds verified flash/readback/boot, audible
   music/effects, sustained audio/scanner progress and USB stack telemetry.
   Sound quality, current audio shutdown, runtime heap/other stack headroom,
   full-map traversal and 30 completed distinct gameplay frames/s remain open.

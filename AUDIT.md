@@ -5,7 +5,7 @@ bitcode, and the linked PI32V2 instructions. These corrections are implemented:
 
 | Finding | Correction | Evidence |
 | --- | --- | --- |
-| Doom requested 8192 words, or 32 KiB, exceeding startup heap | Doom uses 2048 words/8 KiB; USB diagnostics use 1024 words/4 KiB; enforce the complete startup and IIS DMA budget | Pinned SDK stack units and task/control-block allocations inspected; original pre-audio six-task requirement was 48,716 B |
+| Doom requested 8192 words, or 32 KiB, exceeding startup heap | Doom uses 2048 words/8 KiB; current USB diagnostics use 768 words/3 KiB; enforce the complete startup and IIS DMA budget | Pinned SDK stack units and task/control-block allocations inspected; original pre-audio six-task requirement was 48,716 B |
 | SDK `uncompress` passes null callbacks that its inflater rejects | Explicit callbacks, 7 KiB static arena, one complete `Z_FINISH` call | SDK state allocation is 7,120 B; desktop binding tests decode 114 archive blocks and reject corruption/truncation |
 | 493-entry lump directory consumes 13,804 B SDK heap | Allocate zeroed directory inside the fixed Doom zone | 32-bit 296 KiB host passes moving/menu/restart/exit scripts |
 | Desktop error handler fails to report or shut down target I/O | Bounded RAM message, fault/stage update, peripheral stop and watchdog loop | Linked `I_Error` instructions call formatting, stop both peripherals and loop safely |
@@ -61,28 +61,45 @@ blocks and all 160×93 gameplay samples, with detailed HUD in both modes.
 - USB GAME/frame capture uses existing pixels/palette and 128 B persistent
   diagnostics state. It releases on disconnect/error/STOP or 15 seconds;
   audio and scanner continue during a brief between-tick game pause.
-- Repaired app: 554,768 B, SHA-256
-  `64194b06e5b372e0b671b690e04b7a90aad56a89fc59380ad055812f74a6e373`.
-  Static RAM: 477,912 B; linker heap: 45,644 B; reviewed reserve: 4,096 B.
-  This is a static floor, not a runtime free-heap measurement.
-- Python 59/59 and native contracts pass; all 79 engine/7 port sources compile
+- Current `03492fc` app: 555,024 B, SHA-256
+  `fb230df6e1d5bf6f13232551d26638a1caea01eb012a2a3b2a67c91e6cf8b246`.
+  ELF SHA-256:
+  `b7df5e2aa2220091f801daa8177b418e642757ed5fdd291fac365beca171aa0d`.
+  Static RAM: 477,912 B; linker heap: 45,644 B; tasks/queues/idle minimum:
+  37,464 B; reviewed reserve: 5,120 B before other allocations/padding.
+  This is a static floor, not a runtime free-heap measurement. The 3 KiB USB
+  allocation returns 1 KiB to the heap without changing fixed graphics/cache/zone.
+- Python 71/71 and the native USB protocol contract pass; all 424 frozen
+  source/config/header hashes match. All 79 engine/7 port sources compile
   for the target and SDK link passes. Final 16-second OPL/synth mixes have
   zero clipping/music errors. Mixed peaks are -12.79/-16.52 dBFS.
 - Host navigation with installed and compacted maps reaches the corridor,
   opens the first door with one F5 edge, and reaches active enemies. The
-  user's small-area report has no reproduced collision defect; actual device
-  capture and whole-level traversal remain pending.
+  user's small-area report has no reproduced collision defect. A physical
+  frame capture now shows the spawn room and right-hand opening; capture of
+  the reported stopping location and whole-level traversal remain pending.
 
 The prior 554,800 B revision `3318678` was flashed, with all 136 changed sectors
 and the complete image readback verified. Cold boot leaves USB requests failing
 and the user reports no audio. The emitted USB task frame is 3,192 B; its
 periodic status chain reaches 4,320 B on a 4,096 B task stack. The repair keeps
 reply buffers in separate frames: task 136 B, diagnostic maximum 1,424 B.
-The builder gates actual emitted frames with 1,024 B additional SDK margin;
-interrupt SSP is separate (audio closure 384 B of 4,096 B).
-Repair installation and the cause of the audio silence remain unverified.
-Physical volume, audio IRQ deadline, screen capture, sustained controls and
-30 FPS remain device checks.
+Revision `58b9ac4` was flashed with complete readback SHA-256
+`71a78229cec1355d89f95d0a361cfcc751f07571397c0acd28f95b1480d61e2d`.
+USB observation reaches stage 4 with zero engine/LCD/key errors and frame
+capture works. Audio reports `ready=0`, `error=-1`, `irqs=0`, `volume_valid=0`:
+IIS initialization fails before its callback runs.
+The current candidate's explicit `heap_free` queries aggregate allocator space
+outside the audio lock; this does not identify the largest free block or
+minimum-ever free heap. Its emitted diagnostic maximum is 1,436 B, plus
+1,024 B SDK margin, leaving 612 B in the reduced 3,072 B USB stack. The builder
+gates emitted frames; interrupt SSP is separate (audio closure 384 B of 4,096 B).
+Physical acceptance of the allocation fix, volume knob, audio IRQ deadline,
+sustained controls, reported map restriction and 30 FPS remain device checks.
+The `03492fc` flash's full readback matches
+`d2ed5405c1e1c24e8fc75bb77004d59e77a1d25035681953370a1e40a205ae76`.
+One reset completed, but HELLO observation failed; COM10 still enumerates.
+The observation failure latch is preserved. Cold-boot observation is pending.
 
 ## Historical installed graphics/input milestone
 

@@ -2,23 +2,38 @@
 
 ## Evidence from this branch
 
-The OPL/synth/knob revision `3318678` is installed and readback-verified, but
+The OPL/synth/knob revision `3318678` was installed and readback-verified, but
 the user reports silence and USB requests fail after cold boot. An emitted
 3,192 B USB task frame plus status formatting reaches 4,320 B, exceeding its
 4,096 B allocation. The source repair keeps mutually exclusive reply buffers
 in separate frames: task 136 B, maximum diagnostic chain 1,424 B. The builder
 now gates final ELF diagnostic frames with a further 1,024 B SDK margin.
-The repaired app is 554,768 B with the same 170,505 B archive, 477,912 B static
-RAM, 45,644 B heap and 4,096 B reviewed startup reserve. Python contracts,
-target link and native protocol tests pass. Repair installation and physical
-audio/map acceptance are pending. Historical device evidence follows.
+The `58b9ac4` repair is now flashed and complete-readback verified, SHA-256
+`71a78229cec1355d89f95d0a361cfcc751f07571397c0acd28f95b1480d61e2d`.
+USB observation reaches stage 4 with zero engine/LCD/key errors and device
+frame capture works. Audio reports `ready=0`, `error=-1`, `irqs=0` and
+`volume_valid=0`, exposing an IIS initialization failure.
+
+The current `03492fc` allocation fix uses a 3,072 B USB stack to return 1 KiB
+to the runtime heap. App size is 555,024 B, with the same 170,505 B archive,
+477,912 B static RAM and 45,644 B linker heap. Reviewed tasks/queues/idle use
+37,464 B and reviewed startup reserve is 5,120 B before other allocations.
+Its diagnostic chain is 1,436 B plus 1,024 B SDK margin, leaving 612 B. The
+explicit `heap_free` diagnostic queries aggregate remaining allocator space,
+not the largest block or minimum-ever free heap. Python 71/71, target link,
+native USB protocol and 424 source/config/header closure hashes pass.
+The candidate is now flashed with complete readback SHA-256
+`d2ed5405c1e1c24e8fc75bb77004d59e77a1d25035681953370a1e40a205ae76`.
+One reset completed, but HELLO observation fails while COM10 enumerates.
+Cold-boot observation and physical audio/knob acceptance are pending.
+Historical device evidence follows.
 
 The spawn-area report was investigated with both installed and compacted
 assets at a 296 KiB host zone. One F5 press near the first door opens sector 4,
 and the player reaches sector 52 where enemies attack. Straight movement from
 spawn normally hits the north wall; the room exit is to the right. Complete
-E1M1 map lumps are unchanged. Physical position/frame capture remains needed
-to identify the user's exact location.
+E1M1 map lumps are unchanged. A physical capture shows the spawn room and
+right-hand opening; a capture at the reported stopping location remains needed.
 
 | Check | Result | Limit |
 | --- | --- | --- |
@@ -96,7 +111,7 @@ graphics/input milestone uses a 181,995 B E1M1 archive with original pistol/punc
 and finer world/enemy art, linked in read-only XIP flash with a 4 KiB cache.
 Its 569,840 B app fits the reviewed 584,956 B slot. Its fixed 296 KiB zone,
 4 KiB cache and 7 KiB bounded inflater arena are included in 474,488 B static
-RAM, leaving a 49,068 B linker heap span. The installed audio image additionally
+RAM, leaving a 49,068 B linker heap span. The historical `fc03a11` audio image additionally
 implements original sound effects and E1M1 music, accounts for 1024 B IIS DMA,
 and exposes USB stack/IRQ telemetry. Its final 583,216 B app embeds a 177,331 B
 archive with the original pistol, 2×2 fist and 4×4 world/enemies. Static RAM is
@@ -108,8 +123,8 @@ The application SHA-256 is
 `715f58b29fd2f0280ead27adf975aa5908b6832b5b6ebf92634ca7426a9927a5`.
 Its full 1 MiB readback SHA-256 is
 `ce9544e7730372690c9912a83d17ae73d641406c9153d26ada64ce3a7eea6ca9`.
-Physical music/effects are audible, USB stack telemetry and sustained progress
-are recorded, and balance/timbre remains under review. Runtime heap, other
+That milestone's music/effects were audible, USB stack telemetry and sustained
+progress were recorded, and balance/timbre remain under review. Runtime heap, other
 stack headroom, current audio shutdown and whole-level acceptance remain open.
 See [TARGET_CANDIDATE.md](TARGET_CANDIDATE.md) and
 [AUDIT.md](AUDIT.md).
@@ -122,7 +137,7 @@ See [TARGET_CANDIDATE.md](TARGET_CANDIDATE.md) and
    stack, heap, and protected-flash budgets from live diagnostics and the ELF.
 3. Complete sound-quality, DMA deadline and current audio-shutdown checks;
    retain established LCD/input and recovery behavior. Music/effects are
-   already audible and sustained audio/scanner progress is recorded.
+   audible in the earlier milestone; current audio/knob acceptance is pending.
 4. Reproduce the host gameplay image through the LCD, then measure controls,
    frame rate, WAD latency, audio, battery behavior, and restart on the bench.
 5. Preserve the known-good installed v32 image, verify a candidate and restore

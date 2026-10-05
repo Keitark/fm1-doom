@@ -1,10 +1,14 @@
 # FM-1 Doom audio
 
 The earlier `fc03a11` milestone played music and effects with simplified timbres.
-The installed OPL/synth/knob revision `3318678` is readback-verified, but the user
-reports silence after a cold boot and USB requests fail. A confirmed USB task
-stack overflow is repaired in source; installation and knob diagnostics are
-pending. The overflow is not yet established as the cause of the silence.
+The OPL/synth/knob revision `3318678` introduced silence and a confirmed USB
+task stack overflow. The flashed, readback-verified `58b9ac4` repair restores
+USB and running stage 4. Its audio diagnostics report `ready=0`, `error=-1`,
+`irqs=0` and `volume_valid=0`: IIS initialization fails before audio callbacks.
+The current `03492fc` candidate returns 1 KiB of USB task stack to the runtime
+heap and exposes remaining heap space for diagnosis. Its full flash readback
+matches, but HELLO times out after one reset. Cold-boot observation and physical
+audio/knob acceptance of that allocation fix are pending.
 
 ## Output and volume
 
@@ -39,7 +43,7 @@ the reduced image menu does not expose the original sound sliders.
   `noway` and `oof` share identical original samples. Linked chaingun effects
   use the pistol; other unpackaged effects are skipped before stealing an
   active channel. This bank does not contain all Doom sound effects.
-- Effect mixer gain is reduced exactly 6.02 dB from the installed build.
+- Effect mixer gain is reduced exactly 6.02 dB from the earlier `fc03a11` build.
   The decoded sample bytes and timing remain unchanged.
 
 Generated game data and binaries remain in ignored `build/`; they are not
@@ -91,7 +95,12 @@ synth mode's measured DC is -18.2 PCM16 units.
 `DOOM AUDIO` reports readiness, errors, output frames, effect starts, music
 progress/loops/steals, `synth_mode` (0 OPL, 1 synth), `volume_raw`, `volume_gain`,
 `volume_valid`, `volume_errors`, callback timing and minimum unused USB stack
-in 32-bit words. `max_irq_us` uses a 500-microsecond clock; actual callback time
+in 32-bit words. The current candidate also reports `heap_free` through the
+SDK's implemented allocator query, only on an explicit `DOOM AUDIO` request
+and outside the audio lock. This is aggregate remaining allocator space,
+including metadata/uncommitted arena space; it is neither the largest free
+block nor minimum-ever free heap. `max_irq_us` uses a 500-microsecond clock;
+actual callback time
 can be up to 500 microseconds greater. The approximately 1,451-microsecond DMA
 deadline must be checked on the device. This field is not an underrun counter.
 
