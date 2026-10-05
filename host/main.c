@@ -1,6 +1,7 @@
 #include "fm1_doom_runtime.h"
 #include "fm1_doom_wad_file.h"
 #include "doomgeneric.h"
+#include "z_zone.h"
 #include <Windows.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -118,5 +119,6 @@ int main(int argc, char **argv)
     for (i = 0; i < (unsigned)ticks; ++i) doomgeneric_Tick();
     if (!strips || save_ppm(argv[3])) return 1;
     printf("Rendered %u LCD strips over %ld engine ticks to %s\n", strips, ticks, argv[3]);
+    printf("Purgeable/free Doom zone bytes after run: %d\n", Z_FreeMemory());
     return 0;
 }

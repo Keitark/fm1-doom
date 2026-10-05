@@ -10,6 +10,7 @@
 | Same smoke, 1 MiB zone | Fail: `Z_Malloc` requested 54,912 more bytes | Shows this engine layout exceeds FM-1 RAM |
 | Doom shareware 1.8, E1M1 only, 4×4 graphics | 846,762-byte WAD; 277,243-byte FMD1 with 4 KiB blocks/cache | No full-level playthrough |
 | FMD1 direct host read, 120 engine ticks | Pass; exact image hash match with unpacked WAD | Host has 2 MiB zone and zlib DLL |
+| Reduced E1M1 host zone diagnostic | 768 KiB passes 120 ticks; 640 and 512 KiB fail a 64,040-byte allocation | Does not include SDK/static RAM or a complete playthrough |
 | FMD1 Python and C tests | Pass; roundtrip, block crossing, cache, bounds, CRC | C unit test uses an injected decoder |
 | pi32v2 compile of six port/archive sources | Pass with pinned AC79 SDK headers/toolchain | No Doom core, zliblite link, or SDK link |
 | pi32v2 compile of 79 original engine files | Pass with pinned SDK toolchain | Compile only |
@@ -22,6 +23,9 @@ locally outside Git. The screenshot stays in ignored `build/`. This is an IWAD
 compatibility test of the original engine, not a performance measurement.
 The E1M1 data test used a separately obtained Doom shareware 1.8 IWAD; none of
 that input, the derived WAD, or the FMD1 archive is committed.
+The host-only `FM1_DOOM_ZONE_KIB=768` setting overrides Doom's `-mb` minimum
+to test smaller zones. The successful 768 KiB run still greatly exceeds the
+FM-1's entire linkable RAM once SDK/static allocations are considered.
 The size probe is reproducible with `python tools/compile_target_engine.py
 --fm1-root F:\dev\fm1` and `python tools/link_target_probe.py --fm1-root
 F:\dev\fm1` after the port compile. It needs the existing reviewed offline NES

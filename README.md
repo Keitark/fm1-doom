@@ -60,6 +60,9 @@ cache; 8/16/32 KiB blocks make 256,209/241,695/234,247 byte archives at a
 larger cache cost. The direct compressed run and restored WAD produced the same
 120-tick 240×240 image. These are local measurements for that input, not a
 guarantee for every IWAD or a complete level playthrough.
+For a host-only memory check, set `FM1_DOOM_ZONE_KIB` before running the host
+binary. The reduced E1M1 booted at 768 KiB; 640 KiB failed a 64,040-byte
+allocation. This test does not account for SDK, stack, or screen RAM.
 
 With the clean pinned SDK and toolchain from the existing
 [FM-1 board project](https://github.com/Keitark/fm1-tracker), check pi32v2
@@ -108,8 +111,8 @@ The compressed E1M1 data itself can fit in that flash, but the current stock
 application partition and engine+SDK budget have not been proven to fit together.
 An offline link probe measured 404,720 bytes of app sections without assets;
 that plus the 277,243-byte archive exceeds the stock app allocation.
-On the host, this Doomgeneric build rendered E1M1 with a 2 MiB zone, but a
-1 MiB zone failed a 54,912 byte allocation. A lower-memory engine architecture
+On the host, a full Freedoom WAD needed more than a 1 MiB zone. The reduced
+E1M1 passed 768 KiB but failed at 640 KiB. A lower-memory engine architecture
 and a verified flash layout are required before a standalone device build is
 credible. Audio, SDK task integration, image packaging, rollback, and bench
 acceptance remain open. See the exact gates in [PORT_STATUS.md](PORT_STATUS.md).
