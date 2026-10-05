@@ -10,6 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fm1-root", type=Path, required=True)
+    parser.add_argument("--lowres", action="store_true",
+                        help="Compile against generated 160x100 engine source")
     args = parser.parse_args()
     fm1 = args.fm1_root.resolve()
     sys.path.insert(0, str(fm1 / "firmware" / "nes"))
@@ -25,10 +27,15 @@ def main() -> int:
         parser.error("FM-1 SDK checkout is dirty")
     make_text = board.MAKE.read_text(encoding="utf-8")
     flags = board.make_list(make_text, "CFLAGS")
-    includes = ["-I" + str(ROOT / "include"), "-I" + str(ROOT / "vendor/doomgeneric/doomgeneric")]
+    if args.lowres:
+        flags += ["-DFM1_DOOM_SOURCE_WIDTH=160", "-DFM1_DOOM_SOURCE_HEIGHT=100"]
+    engine = ROOT / ("build/lowres-source" if args.lowres else "vendor/doomgeneric/doomgeneric")
+    if not (engine / "i_video.h").is_file():
+        parser.error("generate the low-resolution source first")
+    includes = ["-I" + str(ROOT / "include"), "-I" + str(engine)]
     includes += ["-I" + str(sdk / "apps/common")]
     includes += ["-I" + str(board.sdk_path(item[2:])) for item in board.make_list(make_text, "INCLUDES")]
-    out = ROOT / "build" / "target-port"
+    out = ROOT / "build" / ("target-port-lowres" if args.lowres else "target-port")
     out.mkdir(parents=True, exist_ok=True)
     for name in ("fm1_doom_port", "doomgeneric_fm1", "i_video_fm1", "fm1_doom_archive", "fm1_fmd_zliblite", "w_file_fm1"):
         source = ROOT / "src" / (name + ".c")

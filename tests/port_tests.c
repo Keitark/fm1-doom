@@ -40,8 +40,10 @@ int main(void)
     palette[6 + 1] = 255; /* index 2: green */
     palette[9 + 2] = 255; /* index 3: blue */
     screen[0] = 1;
-    screen[100 * 320 + 160] = 2;
-    screen[199 * 320 + 319] = 3;
+    screen[((120u * FM1_DOOM_SOURCE_HEIGHT) / FM1_DOOM_HEIGHT) * FM1_DOOM_SOURCE_WIDTH
+           + (120u * (FM1_DOOM_SOURCE_WIDTH - 1u)) / (FM1_DOOM_WIDTH - 1u)] = 2;
+    screen[(FM1_DOOM_SOURCE_HEIGHT - 1) * FM1_DOOM_SOURCE_WIDTH
+           + FM1_DOOM_SOURCE_WIDTH - 1] = 3;
     fm1_doom_palette(&port, palette);
     CHECK(fm1_doom_present(&port, screen) == 0);
     CHECK(calls == FM1_DOOM_HEIGHT / FM1_DOOM_STRIP_ROWS && first == 0xf800u && center == 0x07e0u && last == 0x001fu);

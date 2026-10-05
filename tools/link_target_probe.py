@@ -16,6 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fm1-root", type=Path, required=True)
+    parser.add_argument("--lowres", action="store_true",
+                        help="Link generated 160x100 engine probe objects")
     args = parser.parse_args()
     fm1 = args.fm1_root.resolve()
     sys.path.insert(0, str(fm1 / "firmware/nes"))
@@ -30,8 +32,10 @@ def main() -> int:
     if not (base / "sdk.ld").is_file() or not (base / "sdk.used").is_file():
         parser.error("known offline boot baseline is missing")
     board_objects = sorted(base.glob("[0-9][0-9]-*.o"))
-    engine_objects = sorted((ROOT / "build/target-engine").glob("*.c.o"))
-    port_objects = sorted((ROOT / "build/target-port").glob("*.o"))
+    engine_dir = ROOT / ("build/target-engine-lowres" if args.lowres else "build/target-engine")
+    port_dir = ROOT / ("build/target-port-lowres" if args.lowres else "build/target-port")
+    engine_objects = sorted(engine_dir.glob("*.c.o"))
+    port_objects = sorted(port_dir.glob("*.o"))
     if len(engine_objects) != 79 or len(port_objects) != 6:
         parser.error("compile_target_engine.py and compile_target_port.py must pass first")
     libs = [sdk / "include_lib/newlib/pi32v2-lib" / n
@@ -39,7 +43,7 @@ def main() -> int:
     libs += [sdk / "cpu/wl82/liba" / n for n in
              ("cpu.a", "event.a", "system.a", "cfg_tool.a", "fs.a", "common_lib.a", "update.a", "zliblite.a")]
     nes = fm1 / "firmware/nes/build/pi32v2-smb1/libfm1_nes.a"
-    out = ROOT / "build/target-link"
+    out = ROOT / ("build/target-link-lowres" if args.lowres else "build/target-link")
     out.mkdir(parents=True, exist_ok=True)
     make = board.MAKE.read_text(encoding="utf-8")
     flags = board.make_list(make, "CFLAGS")

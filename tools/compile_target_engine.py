@@ -6,14 +6,18 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-DOOM = ROOT / "vendor/doomgeneric/doomgeneric"
 SKIP = {"doomgeneric.c", "doomgeneric_win.c", "i_video.c", "w_file.c"}
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fm1-root", type=Path, required=True)
+    parser.add_argument("--lowres", action="store_true",
+                        help="Compile generated 160x100 engine source")
     args = parser.parse_args()
+    doom = ROOT / ("build/lowres-source" if args.lowres else "vendor/doomgeneric/doomgeneric")
+    if not (doom / "doomgeneric.vcxproj").is_file():
+        parser.error("generate the low-resolution source first")
     fm1 = args.fm1_root.resolve()
     sys.path.insert(0, str(fm1 / "firmware/nes"))
     import build_boot as board
@@ -27,17 +31,17 @@ def main() -> int:
         parser.error("SDK checkout is dirty")
     make = board.MAKE.read_text(encoding="utf-8")
     flags = board.make_list(make, "CFLAGS")
-    includes = ["-I" + str(ROOT / "include"), "-I" + str(DOOM), "-I" + str(sdk / "apps/common")]
+    includes = ["-I" + str(ROOT / "include"), "-I" + str(doom), "-I" + str(sdk / "apps/common")]
     includes.extend("-I" + str(board.sdk_path(i[2:])) for i in board.make_list(make, "INCLUDES"))
-    names = re.findall(r'<ClCompile Include="([^\"]+\.c)"', (DOOM / "doomgeneric.vcxproj").read_text())
-    out = ROOT / "build/target-engine"
+    names = re.findall(r'<ClCompile Include="([^\"]+\.c)"', (doom / "doomgeneric.vcxproj").read_text())
+    out = ROOT / ("build/target-engine-lowres" if args.lowres else "build/target-engine")
     out.mkdir(parents=True, exist_ok=True)
     failures = []
     for name in names:
         if name in SKIP:
             continue
         result = subprocess.run([str(board.TC / "clang.exe"), *flags, *includes,
-                                 "-c", str(DOOM / name), "-o", str(out / (name + ".o"))],
+                                 "-c", str(doom / name), "-o", str(out / (name + ".o"))],
                                 capture_output=True, text=True)
         if result.returncode:
             failures.append(name)

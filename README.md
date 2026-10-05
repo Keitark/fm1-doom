@@ -11,9 +11,16 @@ renders through a 320×200 indexed buffer into FM-1-sized 240×240 RGB565 strips
 and the stock 41-slot key scanner is mapped to Doom key edges. A Windows host
 runner produced real gameplay frames with Freedoom Phase 1 and with an aggressively
 reduced Doom shareware E1M1 archive. The target adapter and archive reader
-compile for pi32v2. The engine has not been linked to
-the FM-1 SDK, connected to the physical LCD/key scanner, or run on the device.
+compile for pi32v2. A diagnostic SDK link retains the NES app and nonfunctional
+file shims; a real Doom application has not been linked, connected to the
+physical LCD/key scanner, or run on the device.
 See [PORT_STATUS.md](PORT_STATUS.md) and [issue #1](https://github.com/Keitark/fm1-doom/issues/1).
+
+An experimental 160×100 build also renders the selected 8×8 E1M1 stage with a
+small health/ammo HUD. It completed 120 host ticks with a 448 KiB Doom zone;
+the [reproduction and limits](LOW_MEMORY_EXPERIMENT.md) are documented. The
+offline FM-1 size probe still exceeds the stock flash allocation and leaves
+insufficient RAM for that zone.
 
 ## Build and test on Windows
 
