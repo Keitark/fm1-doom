@@ -8,13 +8,13 @@ the user reports silence and USB requests fail after cold boot. An emitted
 4,096 B allocation. The source repair keeps mutually exclusive reply buffers
 in separate frames: task 136 B, maximum diagnostic chain 1,424 B. The builder
 now gates final ELF diagnostic frames with a further 1,024 B SDK margin.
-The `58b9ac4` repair is now flashed and complete-readback verified, SHA-256
+The `58b9ac4` repair was flashed and complete-readback verified, SHA-256
 `71a78229cec1355d89f95d0a361cfcc751f07571397c0acd28f95b1480d61e2d`.
-USB observation reaches stage 4 with zero engine/LCD/key errors and device
-frame capture works. Audio reports `ready=0`, `error=-1`, `irqs=0` and
+USB observation reached stage 4 with zero engine/LCD/key errors and device
+frame capture worked. Audio reported `ready=0`, `error=-1`, `irqs=0` and
 `volume_valid=0`, exposing an IIS initialization failure.
 
-The current `03492fc` allocation fix uses a 3,072 B USB stack to return 1 KiB
+The installed `03492fc` allocation fix uses a 3,072 B USB stack to return 1 KiB
 to the runtime heap. App size is 555,024 B, with the same 170,505 B archive,
 477,912 B static RAM and 45,644 B linker heap. Reviewed tasks/queues/idle use
 37,464 B and reviewed startup reserve is 5,120 B before other allocations.
@@ -24,8 +24,25 @@ not the largest block or minimum-ever free heap. Python 71/71, target link,
 native USB protocol and 424 source/config/header closure hashes pass.
 The candidate is now flashed with complete readback SHA-256
 `d2ed5405c1e1c24e8fc75bb77004d59e77a1d25035681953370a1e40a205ae76`.
-One reset completed, but HELLO observation fails while COM10 enumerates.
-Cold-boot observation and physical audio/knob acceptance are pending.
+One reset completed, but HELLO observation failed while COM10 enumerated.
+The user now confirms audible music, no knob response and apparently hung USB.
+Windows currently sees no FM-1 serial port; fresh diagnostics await reconnection.
+
+The next candidate binds Doom/USB tasks to CPU0 and ALINK only to CPU1 at
+priority 3, with CPU0's ALINK route masked and teardown on CPU1. PB6 ADC4 is
+polled every two milliseconds by the existing CPU0 key timer under a separate
+volume lock; a volatile Q7 target reaches the audio callback without ADC work.
+USB scalar audio snapshots bypass the mixer lock and may straddle callbacks.
+`DOOM AUDIO` adds `volume_target` and `volume_samples`. Python 72/72 and three
+native USB/sound/volume-integration contracts pass, including actual ADC-to-
+output full/half/zero/restored gain and timeout. Installation and physical
+knob/USB acceptance are pending; USB-starvation causality remains unproved.
+The new target link passes after fresh compilation of all 79 engine and seven
+port sources. App size is 555,120 B, static RAM 477,896 B, linker heap 45,644 B
+and reviewed reserve 5,120 B. Its 1,460 B diagnostic chain plus 1,024 B SDK
+margin leaves 588 B in the 3,072 B USB stack. Reconnection, physical UBOOT and
+a fresh protected writer session are needed; the old failed-observation latch
+is preserved.
 Historical device evidence follows.
 
 The spawn-area report was investigated with both installed and compacted

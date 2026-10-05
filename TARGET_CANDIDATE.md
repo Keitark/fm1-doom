@@ -14,7 +14,9 @@ transfer failures, record a bounded RAM message and stop LCD/scanner/audio;
 USB status and serial UBOOT remain available. Audio initialization failure is
 nonfatal to rendering and is reported separately. The earlier `fc03a11` build
 was audible; the `58b9ac4` USB repair reported an IIS initialization failure.
-The latest allocation fix's boot and audio/knob acceptance remain pending.
+The installed `03492fc` allocation fix is now audible according to the user,
+but the knob has no effect and USB appears unresponsive. The next candidate's
+CPU/interrupt and knob-polling changes remain pending hardware verification.
 
 The first-stage game contains E1M1 only. Its original image menu offers New
 Game and graphic detail; completing E1M1 starts E1M1 again rather than entering
@@ -71,7 +73,7 @@ is recorded below. The generated file includes derived game
 data and is ignored by Git; keep it private. Check its size and SHA-256
 against the manifest before loading it in your UBOOT program.
 
-## Current audio allocation candidate: hardware verification pending
+## Installed audio allocation revision
 
 Revision `03492fc` produces a 555,024 B app, SHA-256
 `fb230df6e1d5bf6f13232551d26638a1caea01eb012a2a3b2a67c91e6cf8b246`.
@@ -103,18 +105,50 @@ in a 3,192 B task frame; the status call chain exceeded its 4,096 B stack.
 The flashed `58b9ac4` repair emits separate handlers, a 136 B task frame and a
 maximum 1,424 B diagnostic call chain. Full readback SHA-256 is
 `71a78229cec1355d89f95d0a361cfcc751f07571397c0acd28f95b1480d61e2d`.
-USB observation reaches stage 4 with zero engine/LCD/key errors; frame capture
-works. IIS diagnostics show `ready=0`, `error=-1`, `irqs=0`, `volume_valid=0`.
-The current candidate's diagnostic chain is 1,436 B; its build gate reserves
+USB observation reached stage 4 with zero engine/LCD/key errors; frame capture
+worked. IIS diagnostics showed `ready=0`, `error=-1`, `irqs=0`, `volume_valid=0`.
+This revision's diagnostic chain is 1,436 B; its build gate reserves
 a further 1,024 B for reviewed SDK paths and rejects lost handler boundaries,
 unknown stack writes or nested
 diagnostic calls. This scoped gate does not replace live stack/heap acceptance.
-The combined bound leaves 612 B in the 3,072 B task allocation. The current
-candidate's complete flash readback matches
+The combined bound leaves 612 B in the 3,072 B task allocation. Its complete
+flash readback matches
 `d2ed5405c1e1c24e8fc75bb77004d59e77a1d25035681953370a1e40a205ae76`.
-One reset completed, but HELLO times out while COM10 enumerates. Cold-boot
-observation, physical audio/knob acceptance, IIS deadline and sustained controls
-remain to be checked.
+One reset completed, but HELLO timed out while COM10 enumerated. The user now
+confirms audible music, no knob effect and apparently unresponsive USB. Windows
+currently sees no FM-1 port; fresh device diagnostics await reconnection.
+
+## Next CPU/volume candidate: hardware verification pending
+
+Doom and USB tasks use CPU0 `#C0` bindings. ALINK is owned by CPU1 at priority
+3; CPU0's ALINK route is masked and teardown unregisters CPU1. The existing
+CPU0 key timer polls PB6 ADC4 every two milliseconds under a separate volume
+lock, publishing a volatile Q7 gain target to the CPU1 audio callback. ADC work
+is absent from that callback. USB scalar audio status no longer takes the
+mixer lock; its observations can straddle callbacks.
+
+`DOOM AUDIO` adds `volume_target` and `volume_samples`. An integration contract
+exercises the actual ADC driver and output envelope at full, half, zero and
+restored gain plus conversion timeout. Python 72/72 and three native USB,
+sound and volume-integration contracts pass. The integration test also proves
+scalar diagnostics return while the mixer lock is held. All 79 engine and
+seven port sources were freshly recompiled and the target link passes.
+
+| Current candidate item | Value |
+| --- | --- |
+| Plain app / slot headroom | 555,120 B / 29,836 B |
+| App SHA-256 | `b0efff90e99d7f767c8e938f32d2906120f2fe07ff8604ec2b80c33a8315356e` |
+| ELF SHA-256 | `cc757ada7c93c78570d77146784e49a692f8fe3d0f2b18d37e5f63de39ddffe5` |
+| `.ram0_data` / `.ram0_bss` | 26,896 B / 451,000 B |
+| Static RAM / linker heap | 477,896 B / 45,644 B |
+| Reviewed task minimum / startup reserve | 37,464 B / 5,120 B before other allocations/padding |
+| USB task / diagnostic chain / SDK margin | 3,072 B / 1,460 B / 1,024 B; 588 B remaining |
+| Emitted status / trace / audio handler frames | 968 B / 944 B / 1,136 B |
+
+These changes are not installed and do not establish the cause of the observed
+USB loss or a working physical knob. Packaging requires a fresh protected
+writer session using the verified `d2ed…` readback; the old observation failure
+latch stays intact. Reconnection and physical UBOOT entry are pending.
 
 ## Historical installed audio application
 

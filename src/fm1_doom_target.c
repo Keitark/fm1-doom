@@ -45,8 +45,8 @@ const struct task_info task_info_table[] = {
     {"sys_event", 29, 512, 0},
     {"systimer", 14, 256, 0},
     {"sys_timer", 9, 512, 128},
-    {"doom_usb", 11, 768, 0}, /* 3 KiB; emitted diagnostic gate plus live high-water. */
-    {"fm1_doom", 10, 2048, 0}, /* SDK stack size is in 32-bit words: 8 KiB. */
+    {"#C0doom_usb", 11, 768, 0}, /* CPU0 stays available while CPU1 renders OPL. */
+    {"#C0fm1_doom", 10, 2048, 0}, /* SDK stack size is in 32-bit words: 8 KiB. */
     {0, 0, 0, 0, 0},
 };
 
@@ -82,7 +82,6 @@ void fm1_doom_usb_get_status(struct fm1_doom_usb_status *status)
 {
     fm1_doom_sound_diagnostics sound;
     fm1_doom_music_diagnostics music;
-    unsigned flags;
     status->stage = fm1_doom_stage;
     status->frames = fm1_doom_frames;
     status->fault = fm1_doom_fault;
@@ -113,13 +112,11 @@ void fm1_doom_usb_get_status(struct fm1_doom_usb_status *status)
     status->scan_failure_dma_count = scanner.failure.dma_count;
     status->coarse_gameplay = fm1_doom_active_port()
         ? fm1_doom_active_port()->coarse_gameplay : 0;
-    /* Copy bounded scalar audio state while holding its shared IRQ lock.
-       No formatting, allocation or device access occurs in this section. */
-    flags = fm1_doom_sound_lock();
+    /* Best-effort scalar telemetry must never wait for the CPU1 renderer.
+     * These getters do no traversal, allocation or peripheral access. */
     fm1_doom_sound_get_diagnostics(&sound);
     fm1_doom_music_get_diagnostics(&music);
     status->music_playing = fm1_doom_music_is_playing();
-    fm1_doom_sound_unlock(flags);
     status->audio_ready = sound.ready;
     status->audio_error = sound.error;
     status->audio_irqs = sound.irq_count;
@@ -131,6 +128,8 @@ void fm1_doom_usb_get_status(struct fm1_doom_usb_status *status)
     status->volume_gain = sound.volume_gain;
     status->volume_valid = sound.volume_valid;
     status->volume_errors = sound.volume_errors;
+    status->volume_samples = sound.volume_samples;
+    status->volume_target = sound.volume_target;
     status->synth_mode = sound.synth_mode;
     status->music_ticks = music.ticks;
     status->music_events = music.events;
@@ -322,6 +321,7 @@ static void scan_tick(void *unused)
 {
     unsigned flags;
     ++trace_scan_kicks;
+    if (!(trace_scan_kicks & 1u)) fm1_doom_sound_volume_tick();
     flags = input_take();
     (void)unused;
     if (input_irq_enabled) fm1_wl82_keyscan_async_kick(&scanner);

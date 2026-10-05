@@ -179,13 +179,15 @@ int main(void)
     fake.status.volume_gain = 127;
     fake.status.volume_valid = 1;
     fake.status.volume_errors = UINT32_MAX;
+    fake.status.volume_samples = UINT32_MAX;
+    fake.status.volume_target = 127;
     fake.status.synth_mode = 1;
     fake.status.heap_free = INT32_MAX;
     feed(&protocol, "DOOM AU", 220, &io);
     CHECK(!fake.used);
     feed(&protocol, "DIO\n", 221, &io);
     CHECK(!strcmp(fake.output,
-          "DOOM AUDIO ready=1 error=-42 irqs=4294967295 frames=4294967295 sfx_started=4294967295 sfx_voices=2 music_playing=1 music_ticks=4294967295 music_events=4294967295 music_loops=4294967295 music_steals=4294967295 music_errors=4294967295 music_voices=8 usb_stack_words=500 max_irq_us=1000 volume_raw=1023 volume_gain=127 volume_valid=1 volume_errors=4294967295 synth_mode=1 heap_free=2147483647\n"));
+          "DOOM AUDIO ready=1 error=-42 irqs=4294967295 frames=4294967295 sfx_started=4294967295 sfx_voices=2 music_playing=1 music_ticks=4294967295 music_events=4294967295 music_loops=4294967295 music_steals=4294967295 music_errors=4294967295 music_voices=8 usb_stack_words=500 max_irq_us=1000 volume_raw=1023 volume_gain=127 volume_valid=1 volume_errors=4294967295 volume_samples=4294967295 volume_target=127 synth_mode=1 heap_free=2147483647\n"));
     CHECK(fake.used < 510 && !fake.stop_requests && !fake.arm_calls);
     CHECK(fake.heap_queries == 1);
     feed(&protocol, "DOOM AUDIO\r\n", 222, &io);

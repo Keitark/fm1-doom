@@ -32,14 +32,16 @@ def task_heap_budget(source: str, usb_dynamic_heap_bytes: int = 0,
     remaining = entry.sub("", body)
     if not re.fullmatch(r"\s*\{\s*0\s*,\s*0\s*,\s*0\s*,\s*0\s*,\s*0\s*\}\s*,?\s*", remaining):
         raise ValueError("target task budget requires literal stack and queue sizes")
-    names = [name for name, _, _, _ in values]
+    names = [re.sub(r"^#C[01]", "", name) for name, _, _, _ in values]
     reviewed = ["app_core", "sys_event", "systimer", "sys_timer", "fm1_doom"]
     reviewed_usb = reviewed[:4] + ["doom_usb"] + reviewed[4:]
     if names not in (reviewed, reviewed_usb):
         raise ValueError("target task table differs from the reviewed Doom/CDC budget")
     if usb_dynamic_heap_bytes and names != reviewed_usb:
         raise ValueError("CDC heap budget requires the USB task entry")
-    tasks = [{"name": name, "priority": int(priority),
+    tasks = [{"name": re.sub(r"^#C[01]", "", name), "sdk_name": name,
+              "cpu_id": int(name[2]) if re.match(r"^#C[01]", name) else -1,
+              "priority": int(priority),
               "stack_words": int(stack), "stack_bytes": int(stack) * 4,
               "queue_size_bytes": int(queue),
               "queue_allocation_bytes": int(queue) + 92 if int(queue) else 0,

@@ -33,17 +33,25 @@ melody treatment. Effects and synth-mode drums are 6 dB quieter. Its local
 app was flashed and readback-verified, but the user reports no audio and USB
 requests fail after a cold boot. LTO merged reply buffers into a 3,192-byte USB
 task frame; its status call chain exceeds the allocated 4 KiB stack.
-Revision `58b9ac4` repairs the stack overflow and is now flashed with complete
-readback verification. USB observation reaches stage 4 with zero engine/LCD/key
-errors, and a device frame capture succeeds. Audio diagnostics show an IIS
+Revision `58b9ac4` repaired the stack overflow and was flashed with complete
+readback verification. USB observation reached stage 4 with zero engine/LCD/key
+errors, and a device frame capture succeeded. Audio diagnostics showed an IIS
 initialization failure (`ready=0`, `error=-1`, `irqs=0`, `volume_valid=0`).
-The current `03492fc` candidate returns 1 KiB of USB stack headroom to the
+The installed `03492fc` revision returns 1 KiB of USB stack headroom to the
 runtime heap and adds an explicit `heap_free` diagnostic. Its 555,024 B app
 retains 477,912 B static RAM, a 45,644 B linker heap and 5,120 B of reviewed
 startup reserve. The emitted diagnostic chain is 1,436 B; with a 1,024 B SDK
 margin, it leaves 612 B within the 3 KiB USB stack. Its full flash readback
-matches, but HELLO times out after one reset. Cold-boot observation and audible
-audio/knob acceptance are pending.
+matches. HELLO timed out after one reset; the user subsequently confirms audible
+music, but the volume knob has no effect and USB appears unresponsive. Windows
+currently sees no FM-1 serial port; reconnection and fresh diagnostics are pending.
+The next candidate binds Doom/USB tasks to CPU0 and makes CPU1 the single audio
+interrupt owner. It polls the PB6 knob from the CPU0 key timer and sends only a
+gain target to the audio callback. These changes pass host contracts; installation
+and physical knob/USB acceptance remain pending. The cause of the USB loss has
+not been confirmed on the device.
+The new app is 555,120 B with 477,896 B static RAM. Its 1,460 B diagnostic
+chain plus 1,024 B SDK margin leaves 588 B in the 3 KiB USB stack.
 USB position/frame diagnostics can inspect the device display with
 `python tools/capture_usb_frame.py --port COM10` once USB responds after boot.
 The private `build/target-candidate/app.bin` is the verified plain input for a
@@ -199,9 +207,9 @@ working after the scanner fix; whole-level input acceptance remains open.
 ## Limits of the UBOOT input
 
 The reviewed V14/v32 app slot is 584,956 B. The current E1M1 audio candidate,
-including its compressed archive and audio banks, is 555,024 B, leaving 29,932 B.
+including its compressed archive and audio banks, is 555,120 B, leaving 29,836 B.
 It includes a fixed 296 KiB Doom zone, 4 KiB archive cache and 7 KiB bounded
-inflater arena. Static RAM is 477,912 B, leaving a 45,644 B linked heap span.
+inflater arena. Static RAM is 477,896 B, leaving a 45,644 B linked heap span.
 Reviewed startup uses 37,464 B for tasks/queues/idle, an 800 B initialization
 allowance, 1,236 B USB requests and 1,024 B IIS DMA, leaving 5,120 B before
 other allocations/padding. `heap_free` queries aggregate allocator space;

@@ -2,13 +2,22 @@
 
 The earlier `fc03a11` milestone played music and effects with simplified timbres.
 The OPL/synth/knob revision `3318678` introduced silence and a confirmed USB
-task stack overflow. The flashed, readback-verified `58b9ac4` repair restores
-USB and running stage 4. Its audio diagnostics report `ready=0`, `error=-1`,
-`irqs=0` and `volume_valid=0`: IIS initialization fails before audio callbacks.
-The current `03492fc` candidate returns 1 KiB of USB task stack to the runtime
+task stack overflow. The flashed, readback-verified `58b9ac4` repair restored
+USB and running stage 4. Its audio diagnostics reported `ready=0`, `error=-1`,
+`irqs=0` and `volume_valid=0`: IIS initialization failed before audio callbacks.
+The installed `03492fc` revision returns 1 KiB of USB task stack to the runtime
 heap and exposes remaining heap space for diagnosis. Its full flash readback
-matches, but HELLO times out after one reset. Cold-boot observation and physical
-audio/knob acceptance of that allocation fix are pending.
+matches. HELLO timed out after one reset; the user subsequently confirms music
+is audible, but the knob has no effect and USB appears unresponsive. Windows
+currently sees no FM-1 port; fresh diagnostics await reconnection.
+
+The next candidate changes CPU/interrupt ownership and moves knob sampling out
+of the audio callback. It is not installed; knob response and USB recovery are
+not yet established on hardware. CPU starvation has not been proved as the
+cause of the observed USB loss.
+The linked app is 555,120 B with 477,896 B static RAM, a 45,644 B linker heap
+and 5,120 B reviewed startup reserve. Its USB diagnostic chain plus SDK margin
+leaves 588 B in the 3,072 B allocation. See [target artifacts](TARGET_CANDIDATE.md).
 
 ## Output and volume
 
@@ -18,12 +27,19 @@ frames per callback. There is no new task, PCM queue or WAD cache. STOP/fatal
 recovery quiesces the interrupt before closing the channel and freeing DMA.
 
 The physical volume knob uses ADC4 on PB6 through the existing FM-1 volume
-driver. It controls the master mix of music and effects. The callback schedules
-bounded ADC work at an average two-millisecond cadence; it does not wait for a
-conversion or allocate memory. Startup stays muted until a valid knob reading.
+driver. It controls the master mix of music and effects. In the next candidate,
+the existing CPU0 one-millisecond key timer schedules bounded ADC work every
+two milliseconds under a separate volume lock. It publishes a volatile Q7 gain
+target for the CPU1 audio callback; the callback no longer polls the ADC.
+Startup stays muted until a valid knob reading.
 ADC ownership conflicts or conversion errors mute output and remain visible in
 USB diagnostics. The original engine volume defaults still apply internally;
 the reduced image menu does not expose the original sound sliders.
+
+Doom and USB tasks use the SDK's `#C0` binding. ALINK has one owner on CPU1 at
+interrupt priority 3, with its CPU0 route masked; teardown unregisters CPU1.
+USB scalar audio diagnostics do not take the mixer lock. These observational
+snapshots can straddle callbacks and do not prove a coherent moment in time.
 
 ## Music and effects
 
@@ -77,8 +93,11 @@ and 4,233,600 output frames across the complete loop and runtime volume changes.
 This checks software synthesis; it is not an analogue recording of a DOS card.
 Lossless effects are checked byte for byte against original PCM and at their
 exact playback length. Knob tests cover ADC registers, ownership, timeout,
-raw endpoints, deadband and mute behaviour. Physical acceptance of this revision
-is still pending.
+raw endpoints, deadband and mute behaviour. An integration test exercises the
+actual ADC driver through the output envelope at full, half, zero and restored
+gain, and checks conversion timeout muting. The latest source passes 72 Python
+tests and three native USB/sound/volume-integration contracts. Physical knob,
+USB and callback-deadline acceptance of the next candidate is still pending.
 
 An unnormalized 16-second comparison at 44.1 kHz, music/effect volume 64 and
 centred effects has zero clipped samples or music errors in both modes. Mixed
@@ -94,7 +113,8 @@ synth mode's measured DC is -18.2 PCM16 units.
 
 `DOOM AUDIO` reports readiness, errors, output frames, effect starts, music
 progress/loops/steals, `synth_mode` (0 OPL, 1 synth), `volume_raw`, `volume_gain`,
-`volume_valid`, `volume_errors`, callback timing and minimum unused USB stack
+`volume_valid`, `volume_errors`, `volume_samples`, `volume_target`, callback
+timing and minimum unused USB stack
 in 32-bit words. The current candidate also reports `heap_free` through the
 SDK's implemented allocator query, only on an explicit `DOOM AUDIO` request
 and outside the audio lock. This is aggregate remaining allocator space,

@@ -49,9 +49,15 @@ blocks and all 160×93 gameplay samples, with detailed HUD in both modes.
 - E4 selects DOS OPL or a default VCO/VCA/VCF synth treatment. The latter
   keeps OPL percussion at half amplitude. Tests cover eight-voice filter
   stability, release-to-silence, mode transitions and mute.
-- PB6 ADC4 controls master volume, using bounded existing driver work in
-  the audio callback. Startup/conversion errors mute safely; diagnostics
-  report raw value, gain, validity and errors. No new task/heap is added.
+- PB6 ADC4 controls master volume. The next candidate moves bounded driver
+  polling into CPU0's existing key timer every two milliseconds under a
+  separate volume lock. A volatile Q7 target reaches the CPU1 audio callback
+  without ADC work there. Startup/conversion errors mute safely; diagnostics
+  add target gain and completed-sample count. No new task is added.
+- Doom/USB tasks use `#C0` CPU0 binding. ALINK is routed only to CPU1 at priority
+  3, its CPU0 route is masked, and teardown unregisters CPU1. USB scalar audio
+  diagnostics bypass the mixer lock; snapshots may straddle callbacks. These
+  are source corrections, not proof of hardware USB-starvation causality.
 - Unused FAT closure removal saves 41,504 B in the original size probe,
   retaining the three SDFILE configuration drivers. Final link checks their
   exact 360-byte registration and rejects unintended FAT drivers.
@@ -61,7 +67,7 @@ blocks and all 160×93 gameplay samples, with detailed HUD in both modes.
 - USB GAME/frame capture uses existing pixels/palette and 128 B persistent
   diagnostics state. It releases on disconnect/error/STOP or 15 seconds;
   audio and scanner continue during a brief between-tick game pause.
-- Current `03492fc` app: 555,024 B, SHA-256
+- Installed `03492fc` app: 555,024 B, SHA-256
   `fb230df6e1d5bf6f13232551d26638a1caea01eb012a2a3b2a67c91e6cf8b246`.
   ELF SHA-256:
   `b7df5e2aa2220091f801daa8177b418e642757ed5fdd291fac365beca171aa0d`.
@@ -86,10 +92,10 @@ periodic status chain reaches 4,320 B on a 4,096 B task stack. The repair keeps
 reply buffers in separate frames: task 136 B, diagnostic maximum 1,424 B.
 Revision `58b9ac4` was flashed with complete readback SHA-256
 `71a78229cec1355d89f95d0a361cfcc751f07571397c0acd28f95b1480d61e2d`.
-USB observation reaches stage 4 with zero engine/LCD/key errors and frame
-capture works. Audio reports `ready=0`, `error=-1`, `irqs=0`, `volume_valid=0`:
-IIS initialization fails before its callback runs.
-The current candidate's explicit `heap_free` queries aggregate allocator space
+USB observation reached stage 4 with zero engine/LCD/key errors and frame
+capture worked. Audio reported `ready=0`, `error=-1`, `irqs=0`, `volume_valid=0`:
+IIS initialization failed before its callback ran.
+The installed revision's explicit `heap_free` queries aggregate allocator space
 outside the audio lock; this does not identify the largest free block or
 minimum-ever free heap. Its emitted diagnostic maximum is 1,436 B, plus
 1,024 B SDK margin, leaving 612 B in the reduced 3,072 B USB stack. The builder
@@ -99,7 +105,24 @@ sustained controls, reported map restriction and 30 FPS remain device checks.
 The `03492fc` flash's full readback matches
 `d2ed5405c1e1c24e8fc75bb77004d59e77a1d25035681953370a1e40a205ae76`.
 One reset completed, but HELLO observation failed; COM10 still enumerates.
-The observation failure latch is preserved. Cold-boot observation is pending.
+The observation failure latch is preserved. The user subsequently confirms
+audible music but no knob effect and suspects USB is hung. Windows currently
+sees no FM-1 serial port, so fresh diagnostics await reconnection.
+The next candidate passes 72 Python tests and three native USB/sound/volume
+integration contracts, including actual ADC-to-output full/half/zero/restored
+gain and conversion timeout. Scalar diagnostics also return while the mixer
+lock is held. All 79 engine and seven port sources were recompiled for the new
+link. Its app is 555,120 B, SHA-256
+`b0efff90e99d7f767c8e938f32d2906120f2fe07ff8604ec2b80c33a8315356e`;
+ELF SHA-256 is
+`cc757ada7c93c78570d77146784e49a692f8fe3d0f2b18d37e5f63de39ddffe5`.
+Static RAM is 477,896 B (`.ram0_data` 26,896 B, `.ram0_bss` 451,000 B),
+linker heap 45,644 B and reviewed startup reserve 5,120 B. The diagnostic
+chain is 1,460 B plus 1,024 B SDK margin, leaving 588 B in the 3,072 B USB
+stack. Emitted status/trace/audio handler frames are 968/944/1,136 B.
+Its installation and physical knob/USB acceptance remain pending. Packaging
+needs a fresh protected writer session from the verified `d2ed…` receipt;
+the previous observation failure latch remains preserved.
 
 ## Historical installed graphics/input milestone
 

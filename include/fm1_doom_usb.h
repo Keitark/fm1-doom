@@ -22,6 +22,7 @@ struct fm1_doom_usb_status {
     uint32_t music_steals, music_errors, music_voices, usb_stack_words;
     uint32_t max_audio_irq_us;
     uint32_t volume_raw, volume_gain, volume_valid, volume_errors;
+    uint32_t volume_samples, volume_target;
     uint32_t synth_mode;
     int heap_free;
 };

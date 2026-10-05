@@ -12,7 +12,7 @@
 } } while (0)
 
 int snd_channels = 8;
-static unsigned irq_disabled, locked, opens, closes, registered, masked, stopped;
+static unsigned irq_disabled, locked, opens, closes, registered, masked, stopped, in_dma;
 static int fail_open, fail_rate;
 static struct iis_platform_data *retained_pd;
 static void (*handler)(void *, u8 *, int, u8);
@@ -45,7 +45,7 @@ void fm1_volume_stop(fm1_volume *state)
 }
 void fm1_volume_tick(fm1_volume *state)
 {
-    REQUIRE(locked);
+    REQUIRE(locked && !in_dma);
     ++volume_ticks;
     if(!state->running)return;
     if(volume_fail_tick){++state->errors;state->running=state->valid=state->target=0;return;}
@@ -86,17 +86,26 @@ void iis_channel_off(u8 channel,u8 index) { REQUIRE(channel == 8 && !index && !r
 unsigned long jiffies_half_msec(void) { REQUIRE(locked); return half_msec; }
 void iis_irq_handler(u8 index)
 {
-    REQUIRE(!index && locked && handler); handler(0,(u8 *)dma,512,3);
+    REQUIRE(!index && locked && handler);
+    in_dma=1; handler(0,(u8 *)dma,512,3); in_dma=0;
     half_msec += callback_half_msec;
 }
 void request_irq(unsigned irq,int priority,void (*cb)(void),unsigned cpu)
 {
-    REQUIRE(irq == 11 && priority == 3 && !cpu && !registered); irq_handler = cb; registered = 1;
+    REQUIRE(irq == 11 && priority == 3 && cpu == 1 && !registered); irq_handler = cb; registered = 1;
 }
-void bit_clr_ie(unsigned irq,unsigned cpu) { REQUIRE(irq == 11 && !cpu && registered); ++masked; }
+void bit_clr_ie(unsigned irq,unsigned cpu) { REQUIRE(irq == 11 && (cpu == 0 || (cpu == 1 && registered))); ++masked; }
 void unrequest_irq(unsigned irq,unsigned cpu)
 {
-    REQUIRE(irq == 11 && !cpu && registered && !locked && masked); registered = 0; irq_handler = 0;
+    REQUIRE(irq == 11 && cpu == 1 && registered && !locked && masked); registered = 0; irq_handler = 0;
+}
+
+static void service_irq(void)
+{
+    static uint32_t timer_phase;
+    timer_phase+=64000u;
+    if(timer_phase>=88200u){timer_phase-=88200u;fm1_doom_sound_volume_tick();}
+    irq_handler();
 }
 
 static void test_decoder(void)
@@ -305,7 +314,7 @@ static void test_module(void)
     REQUIRE(fm1_sound_module.StartSound(&linked,0,127,127) == -1);
     ticks_before=volume_ticks;
     for (i=0;i<690;++i) {
-        irq_handler();
+        service_irq();
         REQUIRE(!dma[0] && !dma[127]);
     }
     REQUIRE(fm1_doom_sound_frames == 44160 && fm1_doom_sound_irqs == 690);
@@ -317,15 +326,15 @@ static void test_module(void)
     REQUIRE(status.volume_raw==1023 && status.volume_valid && !status.volume_errors);
     REQUIRE(fm1_sound_module.StartSound(&pistol,0,127,127) == 0);
     REQUIRE(fm1_sound_module.SoundIsPlaying(0));
-    callback_half_msec=1; irq_handler();
+    callback_half_msec=1; service_irq();
     REQUIRE(fm1_doom_sound_started == 1);
     status=diagnostics();
     REQUIRE(status.sfx_started == 1 && status.active_voices == 1 && status.irq_count == 691 &&
             status.max_irq_us == 500);
     fm1_sound_module.UpdateSoundParams(0,0,127);
-    half_msec=UINT32_MAX; callback_half_msec=2; irq_handler();
+    half_msec=UINT32_MAX; callback_half_msec=2; service_irq();
     status=diagnostics(); REQUIRE(status.max_irq_us == 1000);
-    callback_half_msec=0; irq_handler();
+    callback_half_msec=0; service_irq();
     status=diagnostics(); REQUIRE(status.max_irq_us == 1000);
     for(i=0;i<128;++i) REQUIRE(!dma[i]);
     fm1_sound_module.StopSound(0);
@@ -349,7 +358,7 @@ static void test_module(void)
     REQUIRE(!fm1_doom_sound_init());
     REQUIRE(fm1_sound_module.StartSound(&pistol,0,127,127)==0);
     for(i=0;i<710;i++){
-        irq_handler();
+        service_irq();
         REQUIRE(!dma[0] && !dma[127]);
     }
     status=diagnostics();
@@ -358,18 +367,18 @@ static void test_module(void)
     REQUIRE(volume_stops==stops_before);
     volume_fail_start=0;
     REQUIRE(!fm1_doom_sound_init());
-    for(i=0;i<850;i++)irq_handler();
+    for(i=0;i<850;i++)service_irq();
     status=diagnostics();
     REQUIRE(status.volume_valid && status.volume_gain==127 && !status.volume_errors);
     volume_raw=0;
-    for(i=0;i<140;i++)irq_handler();
+    for(i=0;i<140;i++)service_irq();
     status=diagnostics();
     REQUIRE(status.volume_valid && !status.volume_raw && !status.volume_gain);
     volume_raw=1023;
-    for(i=0;i<140;i++)irq_handler();
+    for(i=0;i<140;i++)service_irq();
     status=diagnostics();REQUIRE(status.volume_gain==127);
     volume_fail_tick=1;
-    for(i=0;i<140;i++)irq_handler();
+    for(i=0;i<140;i++)service_irq();
     status=diagnostics();
     REQUIRE(status.ready && !status.error && !status.volume_valid && !status.volume_gain && status.volume_errors==1);
     fm1_doom_sound_shutdown();volume_fail_tick=0;

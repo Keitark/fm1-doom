@@ -235,11 +235,13 @@ volatile uint32_t fm1_doom_sound_started;
 static fm1_doom_sound_voice voices[FM1_DOOM_SOUND_VOICES];
 static fm1_audio_startup envelope;
 static fm1_volume master_volume;
-static uint32_t volume_phase;
+static volatile uint32_t volume_target_q7;
 static struct iis_platform_data audio_pd; /* SDK retains this pointer. */
-static spinlock_t audio_lock;
-static unsigned audio_opened, audio_enabled, audio_irq_registered;
-static uint32_t max_irq_us;
+static spinlock_t audio_lock, volume_lock;
+/* Keep the OPL renderer off CPU0's CDC, scanner and timer interrupt path. */
+enum { AUDIO_IRQ_CPU = 1 };
+static volatile unsigned audio_opened, audio_enabled, audio_irq_registered;
+static volatile uint32_t max_irq_us;
 
 static unsigned take(void)
 {
@@ -253,6 +255,28 @@ static void release(unsigned flags)
 {
     arch_spin_unlock(&audio_lock);
     local_irq_restore(flags);
+}
+
+static unsigned volume_take(void)
+{
+    unsigned flags;
+    local_irq_save(flags);
+    arch_spin_lock(&volume_lock);
+    return flags;
+}
+
+static void volume_release(unsigned flags)
+{
+    arch_spin_unlock(&volume_lock);
+    local_irq_restore(flags);
+}
+
+void fm1_doom_sound_volume_tick(void)
+{
+    unsigned flags = volume_take();
+    fm1_volume_tick(&master_volume);
+    volume_target_q7 = master_volume.valid ? master_volume.target : 0;
+    volume_release(flags);
 }
 
 unsigned fm1_doom_sound_lock(void) { return take(); }
@@ -276,6 +300,8 @@ int fm1_doom_sound_is_ready(void)
 void fm1_doom_sound_get_diagnostics(fm1_doom_sound_diagnostics *diagnostics)
 {
     unsigned i;
+    const volatile fm1_volume *volume = &master_volume;
+    const volatile fm1_audio_startup *gain = &envelope;
     if (!diagnostics) return;
     diagnostics->ready = audio_opened && audio_enabled && !fm1_doom_sound_error;
     diagnostics->error = fm1_doom_sound_error;
@@ -283,14 +309,16 @@ void fm1_doom_sound_get_diagnostics(fm1_doom_sound_diagnostics *diagnostics)
     diagnostics->output_frames = fm1_doom_sound_frames;
     diagnostics->sfx_started = fm1_doom_sound_started;
     diagnostics->max_irq_us = max_irq_us;
-    diagnostics->volume_raw = master_volume.raw;
-    diagnostics->volume_gain = envelope.gain_q7;
-    diagnostics->volume_valid = master_volume.valid;
-    diagnostics->volume_errors = master_volume.errors;
+    diagnostics->volume_raw = volume->raw;
+    diagnostics->volume_gain = gain->gain_q7;
+    diagnostics->volume_valid = volume->valid;
+    diagnostics->volume_errors = volume->errors;
+    diagnostics->volume_samples = volume->samples;
+    diagnostics->volume_target = (uint8_t)volume_target_q7;
     diagnostics->synth_mode = fm1_doom_music_get_synth_mode();
     diagnostics->active_voices = 0;
     for (i = 0; i < FM1_DOOM_SOUND_VOICES; ++i)
-        if (voices[i].playing) ++diagnostics->active_voices;
+        if (*(const volatile uint8_t *)&voices[i].playing) ++diagnostics->active_voices;
 }
 
 static void output(void *unused, u8 *data, int len, u8 channel)
@@ -302,14 +330,9 @@ static void output(void *unused, u8 *data, int len, u8 channel)
         return;
     }
     fm1_doom_sound_mix(voices, (int32_t *)data);
-    /* Existing PB6/ADC4 knob driver is nonblocking. A 64-frame DMA callback
-     * gives 1.45/2.90 ms intervals averaging 2 ms, rather than an extra IRQ. */
-    volume_phase += 64000u;
-    if (volume_phase >= 88200u) {
-        volume_phase -= 88200u;
-        fm1_volume_tick(&master_volume);
-    }
-    envelope.target_q7 = master_volume.valid ? master_volume.target : 0;
+    /* Byte-sized control snapshot. CPU0 polls the ADC under volume_lock;
+     * render work never delays its 2 ms sampling cadence. */
+    envelope.target_q7 = (uint8_t)volume_target_q7;
     fm1_audio_startup_process24(&envelope, (int32_t *)data);
     fm1_doom_sound_frames += 64u;
 }
@@ -332,17 +355,20 @@ static void audio_isr(void)
 void fm1_doom_sound_shutdown(void)
 {
     unsigned flags;
-    if (audio_irq_registered) bit_clr_ie(IRQ_ALNK_IDX, 0);
+    if (audio_irq_registered) bit_clr_ie(IRQ_ALNK_IDX, AUDIO_IRQ_CPU);
     flags = take();
     audio_enabled = 0;
     memset(voices, 0, sizeof(voices));
     fm1_doom_music_stop_locked();
-    fm1_volume_stop(&master_volume);
     envelope.gain_q7 = 0;
     envelope.target_q7 = 0;
     release(flags);
+    flags = volume_take();
+    fm1_volume_stop(&master_volume);
+    volume_target_q7 = 0;
+    volume_release(flags);
     if (audio_irq_registered) {
-        unrequest_irq(IRQ_ALNK_IDX, 0);
+        unrequest_irq(IRQ_ALNK_IDX, AUDIO_IRQ_CPU);
         audio_irq_registered = 0;
     }
     if (audio_opened) {
@@ -376,12 +402,12 @@ int fm1_doom_sound_init(void)
     memset(voices, 0, sizeof(voices));
     fm1_audio_startup_reset(&envelope);
     envelope.target_q7 = 0;
-    volume_phase = 0;
-    flags = take();
+    flags = volume_take();
     /* ADC ownership/conversion errors are separate diagnostics and fail
      * muted; IIS keeps running so the fault can be observed over USB. */
     fm1_volume_start(&master_volume);
-    release(flags);
+    volume_target_q7 = 0;
+    volume_release(flags);
     rc = iis_open(&audio_pd, 0);
     if (rc) {
         fm1_doom_sound_error = rc;
@@ -399,7 +425,8 @@ int fm1_doom_sound_init(void)
     flags = take();
     audio_enabled = 1;
     release(flags);
-    request_irq(IRQ_ALNK_IDX, 3, audio_isr, 0);
+    bit_clr_ie(IRQ_ALNK_IDX, 0);
+    request_irq(IRQ_ALNK_IDX, 3, audio_isr, AUDIO_IRQ_CPU);
     audio_irq_registered = 1;
     iis_channel_on(8, 0);
     snd_channels = FM1_DOOM_SOUND_VOICES;

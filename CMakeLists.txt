@@ -54,6 +54,15 @@ if(FM1_DOOM_SOUND_BANK_SOURCE)
     "${FM1_DOOM_BOARD_ROOT}/include" "${FM1_DOOM_SOUND_BANK_DIRECTORY}")
   target_compile_definitions(sound_tests PRIVATE FM1_DOOM_SOUND_TEST=1 _CRT_SECURE_NO_WARNINGS)
   add_test(NAME target_sound_contract COMMAND sound_tests)
+  add_executable(sound_volume_integration_tests tests/sound_volume_integration_tests.c
+    src/fm1_doom_sound.c "${FM1_DOOM_SOUND_BANK_SOURCE}"
+    "${FM1_DOOM_BOARD_ROOT}/src/fm1_audio_queue.c"
+    "${FM1_DOOM_BOARD_ROOT}/src/fm1_volume.c")
+  target_include_directories(sound_volume_integration_tests PRIVATE include tests "${DOOM_SRC}"
+    "${FM1_DOOM_BOARD_ROOT}/include" "${FM1_DOOM_SOUND_BANK_DIRECTORY}")
+  target_compile_definitions(sound_volume_integration_tests PRIVATE
+    FM1_DOOM_SOUND_TEST=1 FM1_VOLUME_TEST=1 _CRT_SECURE_NO_WARNINGS)
+  add_test(NAME target_sound_volume_integration_contract COMMAND sound_volume_integration_tests)
 endif()
 
 set(FM1_DOOM_MUSIC_BANK_SOURCE "" CACHE FILEPATH "Private generated FM-1 music score for host tests")

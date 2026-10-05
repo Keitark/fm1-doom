@@ -18,13 +18,16 @@ distinct-frame benchmark or a full E1M1 traversal.
 The newer `3318678` OPL/synth/knob build was installed and readback-verified,
 but the user reports no audio and restricted movement near spawn after cold
 boot. COM6 enumerates but requests time out. A compiled USB task stack overflow
-was confirmed. The flashed `58b9ac4` repair restores USB stage 4 and frame
-capture, but audio reports an IIS initialization failure (`ready=0`,
-`error=-1`, `irqs=0`, `volume_valid=0`). The current `03492fc` allocation fix
+was confirmed. The flashed `58b9ac4` repair restored USB stage 4 and frame
+capture, but audio reported an IIS initialization failure (`ready=0`,
+`error=-1`, `irqs=0`, `volume_valid=0`). The installed `03492fc` allocation fix
 returns 1 KiB to the runtime heap and adds an explicit `heap_free` query.
 Its full flash readback matches, but HELLO fails after one reset while COM10
-enumerates. Cold-boot observation and physical audio/knob acceptance are pending;
-the reported map restriction still requires a capture at the stopping location.
+enumerated. The user subsequently confirms audible music, but the knob has no
+effect and USB appears unresponsive. Windows currently sees no FM-1 port;
+fresh diagnostics await reconnection. The next CPU/volume candidate is not
+installed, and the reported map restriction still requires a capture at the
+stopping location.
 
 ## Graphics/input milestone artifacts
 
@@ -212,7 +215,7 @@ Protected session:
 - Local frame/palette capture: ignored `build/usb-frame/repair-screen.png`
   and `repair-screen-source.png`.
 
-## Audio allocation installation: boot verification pending
+## Audio allocation installation and reported knob failure
 
 Revision `03492fc` produces a 555,024 B app, SHA-256
 `fb230df6e1d5bf6f13232551d26638a1caea01eb012a2a3b2a67c91e6cf8b246`.
@@ -236,10 +239,44 @@ readback matching SHA-256
 One reset completed. COM10 enumerates, but both the protected observation and
 a bounded read-only HELLO check failed. The observation failure latch remains
 intact; no reset or write retry was issued. A physical cold power cycle was
-requested. Cold-boot USB/audio/knob acceptance is pending.
+requested. The user subsequently confirms audible music, but the knob has no
+effect and USB appears hung. Windows currently sees no FM-1 serial port;
+fresh runtime diagnostics await reconnection. This establishes reported sound
+output without accepting knob control, USB recovery or callback deadlines.
 
 Receipts in the fresh session above:
 
 - Deployment/readback: `runs/45e85ac3f5a84c0ea0e8e3e239c76be8`.
 - Reset: `runs/b64ebe282c1d4c1da83fe4c2c7511e28`.
 - Failed observation: `runs/b2fa6288b2d249b1904db8939ac422c0`.
+
+## Next CPU/volume candidate: not installed
+
+Doom and USB tasks are bound to CPU0 with the SDK's `#C0` notation. ALINK is
+routed only to CPU1 at interrupt priority 3, with CPU0's route masked and
+teardown unregistering CPU1. USB scalar audio diagnostics no longer take the
+mixer lock; snapshots may straddle callbacks. The cause of the observed USB
+loss has not been established by fresh device telemetry.
+
+The existing CPU0 key timer polls PB6 ADC4 every two milliseconds under a
+separate volume lock. A volatile Q7 gain target reaches the CPU1 audio callback;
+ADC work no longer runs in that callback. `DOOM AUDIO` adds target gain and
+completed-sample count. The integration contract exercises the actual ADC
+driver and output envelope at full, half, zero and restored gain, plus timeout
+muting. Python 72/72 and three native USB/sound/volume-integration contracts pass.
+Scalar diagnostics also return with the mixer lock held. All 79 engine and
+seven port sources were recompiled and the target link passes.
+
+| Candidate item | Value |
+| --- | --- |
+| Plain `app.bin` | 555,120 B |
+| App SHA-256 | `b0efff90e99d7f767c8e938f32d2906120f2fe07ff8604ec2b80c33a8315356e` |
+| ELF SHA-256 | `cc757ada7c93c78570d77146784e49a692f8fe3d0f2b18d37e5f63de39ddffe5` |
+| Static RAM / linker heap | 477,896 B / 45,644 B |
+| Reviewed task minimum / startup reserve | 37,464 B / 5,120 B before other allocations/padding |
+| USB task / diagnostic chain / SDK margin | 3,072 B / 1,460 B / 1,024 B; 588 B remaining |
+
+No new device write has occurred. Reconnection, physical UBOOT entry and a
+fresh protected writer session are pending. That session will use the verified
+`d2ed…` readback receipt as its baseline; the old observation failure latch
+remains intact. Installation and physical knob/USB acceptance remain open.

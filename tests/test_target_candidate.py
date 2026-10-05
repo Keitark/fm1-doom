@@ -17,7 +17,7 @@ class TargetBudgetTests(unittest.TestCase):
 
     def test_old_stack_exceeds_previous_linker_heap(self):
         source = (ROOT / "src/fm1_doom_target.c").read_text(encoding="utf-8")
-        source = source.replace('"fm1_doom", 10, 2048', '"fm1_doom", 10, 8192')
+        source = source.replace('"#C0fm1_doom", 10, 2048', '"#C0fm1_doom", 10, 8192')
         budget = task_heap_budget(source, 1236)
         self.assertEqual(budget["required_linker_heap_bytes"], 68_172)
         self.assertGreater(budget["required_linker_heap_bytes"], 48_332)
@@ -32,12 +32,20 @@ class TargetBudgetTests(unittest.TestCase):
 
     def test_usb_reduction_returns_heap_without_changing_doom_stack(self):
         source = (ROOT / "src/fm1_doom_target.c").read_text(encoding="utf-8")
-        previous = source.replace('"doom_usb", 11, 768', '"doom_usb", 11, 1024')
+        previous = source.replace('"#C0doom_usb", 11, 768', '"#C0doom_usb", 11, 1024')
         current = task_heap_budget(source, 1236, 1024)
         old = task_heap_budget(previous, 1236, 1024)
         self.assertEqual(old["minimum_task_heap_bytes"] - current["minimum_task_heap_bytes"], 1024)
         doom = next(task for task in current["tasks"] if task["name"] == "fm1_doom")
         self.assertEqual(doom["stack_bytes"], 8192)
+
+    def test_task_affinity_keeps_usb_and_game_off_audio_cpu(self):
+        source = (ROOT / "src/fm1_doom_target.c").read_text(encoding="utf-8")
+        tasks = {task["name"]: task for task in task_heap_budget(source)["tasks"]}
+        self.assertEqual(tasks["doom_usb"]["cpu_id"], 0)
+        self.assertEqual(tasks["fm1_doom"]["cpu_id"], 0)
+        with self.assertRaises(ValueError):
+            task_heap_budget(source.replace("#C0doom_usb", "#C2doom_usb"))
 
     def test_iis_allocation_is_derived_from_driver_operands(self):
         driver = '''define i32 @iis_open(i8* %pd, i32 %cbuf) {

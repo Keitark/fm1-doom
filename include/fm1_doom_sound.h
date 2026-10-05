@@ -49,12 +49,16 @@ typedef struct {
     uint32_t max_irq_us; /* 500 us quantization; actual duration may be <500 us larger. */
     uint16_t volume_raw;
     uint8_t volume_gain, volume_valid;
-    uint32_t volume_errors;
+    uint32_t volume_errors, volume_samples;
+    uint8_t volume_target;
     uint32_t synth_mode;
 } fm1_doom_sound_diagnostics;
-/* Task-side snapshot: caller must hold fm1_doom_sound_lock(). IRQ counts
- * indicate serviced interrupts; they do not measure missed DMA deadlines. */
+/* Bounded scalar diagnostics; no mixer lock. Values may straddle a callback.
+ * IRQ counts do not measure missed DMA deadlines. */
 void fm1_doom_sound_get_diagnostics(fm1_doom_sound_diagnostics *diagnostics);
+/* Existing CPU0 input timer calls this once every 2 ms, independently of DMA.
+ * It owns the ADC through a separate short lock, with no music rendering. */
+void fm1_doom_sound_volume_tick(void);
 /* Return zero on success. Failure leaves audio silent and is nonfatal to Doom. */
 int fm1_doom_sound_init(void);
 int fm1_doom_sound_is_ready(void);
