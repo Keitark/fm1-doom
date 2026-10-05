@@ -9,8 +9,10 @@
 | Freedoom Phase 1 smoke, 120 engine ticks, 2 MiB zone | Pass; 9,720 four-row strip callbacks; nonflat E1M1 gameplay image | Host file-backed WAD, no sound |
 | Same smoke, 1 MiB zone | Fail: `Z_Malloc` requested 54,912 more bytes | Shows this engine layout exceeds FM-1 RAM |
 | Doom shareware 1.8, E1M1 only, 4×4 graphics | 846,762-byte WAD; 277,243-byte FMD1 with 4 KiB blocks/cache | No full-level playthrough |
+| Selected 8×8 graphics | 747,056-byte WAD; 199,483-byte FMD1 with 16 KiB blocks/cache | Recognizable boot image; no full-level playthrough |
+| Same E1M1, 16×16 graphics | 697,100-byte WAD; 182,138-byte FMD1 with 16 KiB blocks/cache | Recognizable boot image; no full-level playthrough |
 | FMD1 direct host read, 120 engine ticks | Pass; exact image hash match with unpacked WAD | Host has 2 MiB zone and zlib DLL |
-| Reduced E1M1 host zone diagnostic | 768 KiB passes 120 ticks; 640 and 512 KiB fail a 64,040-byte allocation | Does not include SDK/static RAM or a complete playthrough |
+| Reduced E1M1 host zone diagnostic | 768 KiB passes 120 ticks for 4×4, 8×8, and 16×16 assets; 640 and 512 KiB fail a 64,040-byte allocation with 4×4 assets | Does not include SDK/static RAM or a complete playthrough |
 | FMD1 Python and C tests | Pass; roundtrip, block crossing, cache, bounds, CRC | C unit test uses an injected decoder |
 | pi32v2 compile of six port/archive sources | Pass with pinned AC79 SDK headers/toolchain | No Doom core, zliblite link, or SDK link |
 | pi32v2 compile of 79 original engine files | Pass with pinned SDK toolchain | Compile only |
@@ -44,13 +46,14 @@ The [RP2040 Doom port](https://github.com/kilograham/rp2040-doom) demonstrates
 that a reworked original engine can fit 264 KiB of RAM by keeping immutable
 level data in flash. Its [memory notes](https://kilograham.github.io/rp2040-doom/speed_and_ram.html)
 describe why a straight Chocolate Doom build does not fit. The FM-1 still needs
-an engine memory redesign. FMD1 now supplies bounded random reads of a reduced
-E1M1 WAD in 277,243 bytes, but the reader is not bound to the physical flash
-map. The current stock V15 application allocation is about 602 KiB, and the
+an engine memory redesign. FMD1 now supplies bounded random reads of the
+selected 8×8 E1M1 WAD in 199,483 bytes with a 16 KiB cache, but the reader is
+not bound to the physical flash map. The current stock V15 application
+allocation is 602,112 bytes, and the
 tracker v31 application occupies 340,912 bytes; an E1M1 archive plus the full
 Doom engine cannot be declared to fit from those figures. The probe's 404,720 B
-app sections plus the measured 277,243 B archive total 681,963 B before any
-new integration code, above the stock V15 app allocation. Extending the app
+app sections plus the selected 8×8 archive total 604,203 B before any new
+integration code, 2,091 B above the stock V15 app allocation. Extending the app
 region would require a reviewed layout that preserves protected identity data
 and a rollback path.
 

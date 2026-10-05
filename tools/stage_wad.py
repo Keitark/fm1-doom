@@ -276,7 +276,7 @@ def main() -> None:
                         help="Also keep only map actor, weapon, and common effect sprites")
     parser.add_argument("--no-attract-art", action="store_true",
                         help="Drop title/help/credits images for direct E1M1 boot")
-    parser.add_argument("--pixelate", type=int, choices=(1, 2, 4), default=1,
+    parser.add_argument("--pixelate", type=int, choices=(1, 2, 4, 8, 16), default=1,
                         help="Coarsen patch/sprite/flat pixels while keeping logical dimensions")
     args = parser.parse_args()
     map_name = args.map.upper().encode("ascii")
@@ -290,6 +290,7 @@ def main() -> None:
         parser.error("--prune-sprites requires --prune-graphics")
     if args.prune_graphics:
         stage = prune_graphics(stage, map_name, args.prune_sprites, args.pixelate)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
     length = write_wad(args.output, stage)
     packed = len(zlib.compress(args.output.read_bytes(), 9))
     print(f"source={args.iwad.stat().st_size} bytes {len(source)} lumps")

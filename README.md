@@ -33,14 +33,14 @@ video adapter emitted. It is a host rig; it does not send pixels to the device.
 ## Make a small E1M1 archive
 
 Bring a lawful Doom shareware IWAD. The following creates a local staged WAD
-containing E1M1, needed graphics and sprites, and coarse 4×4 asset pixels.
+containing E1M1, needed graphics and sprites, and coarse 8×8 asset pixels.
 The stage tool does not include game data in this repository. These options
 target direct E1M1 boot with sound disabled; other levels, menus, and completion
 screens are not yet validated.
 
 ```powershell
-python tools/stage_wad.py C:\path\to\doom1.wad build\stage.wad --map E1M1 --silent --prune-graphics --prune-sprites --no-attract-art --pixelate 4
-python tools/pack_archive.py build\stage.wad build\doom1.wad --block-size 4096
+python tools/stage_wad.py C:\path\to\doom1.wad build\stage.wad --map E1M1 --silent --prune-graphics --prune-sprites --no-attract-art --pixelate 8
+python tools/pack_archive.py build\stage.wad build\doom1.wad --block-size 16384
 ```
 
 `build\doom1.wad` is an **FMD1 compressed archive**, despite its name. Doom's
@@ -54,11 +54,17 @@ other Doom ports.
 python tools/pack_archive.py build\doom1.wad build\restored.wad --unpack
 ```
 
-On the tested shareware 1.8 input, the 4×4 stage WAD is **846,762 bytes** and
-the 4 KiB block archive is **277,243 bytes**. It needs a 4 KiB decoded-block
-cache; 8/16/32 KiB blocks make 256,209/241,695/234,247 byte archives at a
-larger cache cost. The direct compressed run and restored WAD produced the same
-120-tick 240×240 image. These are local measurements for that input, not a
+On the tested shareware 1.8 input, asset pixelation gave these sizes:
+
+| Pixel blocks | Staged WAD | FMD1, 4 KiB cache | FMD1, 16 KiB cache |
+| ---: | ---: | ---: | ---: |
+| 4×4 | 846,762 B | 277,243 B | 241,695 B |
+| **8×8 (selected)** | **747,056 B** | **232,092 B** | **199,483 B** |
+| 16×16 | 697,100 B | 212,966 B | 182,138 B |
+
+The selected 8×8 direct compressed run rendered a recognizable start view at 768 KiB
+of host Doom zone. Its 4 KiB and 16 KiB archive variants produced the same
+120-tick 240×240 image hash. These are local measurements for that input, not a
 guarantee for every IWAD or a complete level playthrough.
 For a host-only memory check, set `FM1_DOOM_ZONE_KIB` before running the host
 binary. The reduced E1M1 booted at 768 KiB; 640 KiB failed a 64,040-byte
@@ -107,10 +113,11 @@ project. They still need gameplay acceptance on the physical key matrix.
 ## Why this is not ready to install
 
 The FM-1 has 1 MiB of internal flash and roughly 500 KiB of application RAM.
-The compressed E1M1 data itself can fit in that flash, but the current stock
-application partition and engine+SDK budget have not been proven to fit together.
-An offline link probe measured 404,720 bytes of app sections without assets;
-that plus the 277,243-byte archive exceeds the stock app allocation.
+The compressed E1M1 data itself can fit in that flash. An offline link probe
+measured 404,720 bytes of app sections without assets; combined with the selected
+199,483-byte E1M1 archive this is 604,203 bytes, 2,091 bytes above the stock
+602,112-byte app allocation. The probe retains NES and nonfunctional libc shims;
+this arithmetic does not prove a real Doom firmware will fit.
 On the host, a full Freedoom WAD needed more than a 1 MiB zone. The reduced
 E1M1 passed 768 KiB but failed at 640 KiB. A lower-memory engine architecture
 and a verified flash layout are required before a standalone device build is

@@ -72,6 +72,7 @@ def main() -> None:
         parser.error("input and output must differ")
     source = args.input.read_bytes()
     result = unpack(source) if args.unpack else pack(source, args.block_size)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(result)
     print(f"{len(source)} -> {len(result)} bytes")
 
