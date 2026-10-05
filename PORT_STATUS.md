@@ -25,7 +25,7 @@
 | Experimental 160×100 size probe | Links; 433,296 B app sections before WAD, 343,088 B static RAM | Same probe limitations; selected archive makes 624,830 B before integration |
 | Direct-E1M1 Doom-only size probe | Links without NES app; 363,888 B app sections before WAD; fixed 296 KiB zone and 4 KiB cache included in 477,656 B static RAM; 45,900 B linked heap span | Empty `app_main`, nonfunctional libc shims; not bootable Doom |
 | Current menu Doom-only size probe | Links without NES app; 361,072 B app sections before WAD; 470,728 B static RAM; 52,812 B linked heap span; 478,662 B app plus FMD1 | Inert app and unsupported libc; size baseline only |
-| Offline real Doom application candidate | Links SDK task, XIP FMD1, stock LCD and SPI2 scanner: 482,448 B app, 475,224 B static RAM, 48,332 B linked heap span | Raw app only; no device run, sound, update package, or runtime heap proof |
+| UBOOT `app.bin` input | Links SDK task, XIP FMD1, stock LCD and SPI2 scanner: 482,448 B app, 475,224 B static RAM, 48,332 B linked heap span | Plain `-app` input ready; no device run, sound, or runtime heap proof |
 | Current eight-row host output | 4,860 callbacks over 120 ticks; exact image hash match with four-row output | No hardware timing or FPS result |
 | FM-1 boot, LCD, keys, audio | Physical test not attempted | No installable update package |
 
@@ -77,8 +77,9 @@ flash behavior have not been measured. See [TARGET_CANDIDATE.md](TARGET_CANDIDAT
    recovery/control channel without ISR blocking.
 4. Reproduce the host gameplay image through the LCD, then measure controls,
    frame rate, WAD latency, audio, battery behavior, and restart on the bench.
-5. Preserve the known-good installed v30 image, verify a candidate and restore
+5. Preserve the known-good installed v32 image, verify a candidate and restore
    plan, and perform any physical write only as a deliberate bench step.
 
-Until these gates pass, this repository contains source and an offline raw app
-candidate only. No file here is a firmware update payload.
+Until these gates pass, the generated private `build/target-candidate/app.bin`
+is a UBOOT application input, not a hardware-qualified Doom release or a full
+flash image. No game data or firmware binary is committed to the repository.

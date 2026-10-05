@@ -6,13 +6,16 @@ submodule at `dcb7a8dbc7a16ce3dda29382ac9aae9d77d21284`. Game assets are
 separate: bring a lawful IWAD such as the Doom shareware WAD or Freedoom. No
 WAD, stock firmware dump, device key, or flashable image is distributed here.
 
-**Status: linked, unflashed E1M1 application candidate; hardware behavior unverified.** The engine
+**Status: UBOOT `app.bin` input built, unflashed; hardware behavior unverified.** The engine
 renders through a 320×200 indexed buffer into FM-1-sized 240×240 RGB565 strips,
 and the stock 41-slot key scanner is mapped to Doom key edges. A Windows host
 runner produced real gameplay frames with Freedoom Phase 1 and with an aggressively
 reduced Doom shareware E1M1 archive. A real SDK Doom task, XIP-embedded
 compressed archive, LCD strip output, and SPI2 key scanner now link for pi32v2.
 They have not run on the physical device; audio and 30 FPS acceptance remain open.
+The private `build/target-candidate/app.bin` is the verified plain input for a
+WL82 UBOOT flow accepting SDK `-app app.bin`; see [target candidate](TARGET_CANDIDATE.md)
+for its exact format and limits.
 See [PORT_STATUS.md](PORT_STATUS.md) and [issue #1](https://github.com/Keitark/fm1-doom/issues/1).
 
 An experimental 160×100 direct-E1M1 build renders gameplay as exact 8×8 LCD

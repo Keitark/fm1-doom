@@ -8,6 +8,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import struct
 import subprocess
 import sys
 
@@ -15,6 +16,7 @@ from pack_archive import unpack
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_LIMIT = 602_112  # stock V15 application allocation, not whole flash
+UBOOT_APP_SLOT_LIMIT = 584_956  # reviewed V14/v32 application slot
 RAM0_LIMIT = 523_596  # pinned linker RAM0 window
 
 
@@ -142,7 +144,18 @@ def main() -> int:
             "--plugin-opt=-pi32v2-large-program=true",
             "--plugin-opt=-used-symbol-file=" + str(base / "sdk.used")]
     run(link, cwd=out)
+    elf_bytes = elf.read_bytes()
+    if elf_bytes[:7] != b"\x7fELF\x01\x01\x01" or len(elf_bytes) < 52:
+        raise ValueError("target is not a little-endian ELF32 executable")
+    elf_type, elf_machine, elf_version, elf_entry = struct.unpack_from("<HHII", elf_bytes, 16)
+    if (elf_type, elf_machine, elf_version, elf_entry) != (2, 0xF1, 1, 0x02000120):
+        raise ValueError("ELF machine or FM-1 UBOOT XIP entry differs")
     sections = parse_sections(run([str(board.TC / "llvm-objdump.exe"), "-h", str(elf)]))
+    if sections.get(".text", (0, 0))[1] != 0x02000120:
+        raise ValueError("XIP text does not start at the UBOOT application entry")
+    for name in (".data", ".bss", ".dynamic_data", ".dynamic_bss"):
+        if sections.get(name, (0, 0))[0]:
+            raise ValueError(f"unsupported external RAM section is nonempty: {name}")
     nm = run([str(board.TC / "llvm-nm.exe"), "-n", str(elf)])
     image_symbol = re.search(r"^([0-9a-fA-F]+)\s+[A-Za-z]\s+fm1_doom_embedded_archive$", nm, re.M)
     if not image_symbol or ".text" not in sections:
@@ -167,21 +180,31 @@ def main() -> int:
     ram = sum(sections.get(name, (0, 0))[0]
               for name in (".ram0_data", ".ram0_bss"))
     heap_bytes = heap["_HEAP_END"] - heap["_HEAP_BEGIN"]
-    if application.stat().st_size > APP_LIMIT or ram > RAM0_LIMIT or heap_bytes < 32_768:
+    if application.stat().st_size > min(APP_LIMIT, UBOOT_APP_SLOT_LIMIT) or ram > RAM0_LIMIT or heap_bytes < 32_768:
         raise ValueError("candidate exceeds flash/RAM or leaves under 32 KiB linker heap")
+    uboot_app = out / "app.bin"
+    uboot_app.write_bytes(application.read_bytes())
+    if uboot_app.read_bytes() != b"".join(parts):
+        raise ValueError("UBOOT app.bin differs from the five SDK section binaries")
     report = {
-        "status": "linked_unflashed_candidate", "flashable": False,
+        "status": "uboot_app_input_ready_unflashed", "flashable": True,
+        "hardware_boot_verified": False,
         "sdk_commit": board.SDK_PIN, "archive_sha256": hashlib.sha256(source).hexdigest(),
         "archive_bytes": len(source), "archive_flash_vma": image_vma,
         "application_bytes": application.stat().st_size,
         "application_sha256": hashlib.sha256(application.read_bytes()).hexdigest(),
+        "uboot_app_file": str(uboot_app),
+        "uboot_app_input_ready": True,
+        "uboot_app_format": "plain WL82 SDK app.bin for isd_download -app; not an encoded raw-flash image",
+        "uboot_xip_entry": hex(elf_entry),
+        "reviewed_app_slot_limit_bytes": UBOOT_APP_SLOT_LIMIT,
         "source_sha256": {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
                           for path in sources},
         "ram0_data_bytes": sections.get(".ram0_data", (0, 0))[0],
         "ram0_bss_bytes": sections.get(".ram0_bss", (0, 0))[0],
         "linked_heap_bytes_before_runtime": heap_bytes,
         "missing_acceptance": ["physical boot", "runtime heap/stack", "LCD/key behavior",
-                               "audio", "30 FPS timing", "rollback and update packaging"],
+                               "audio", "30 FPS timing", "physical rollback and write validation"],
         "device_operations_performed": False,
     }
     manifest.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

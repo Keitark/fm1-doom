@@ -1,4 +1,4 @@
-# Offline FM-1 Doom application candidate
+# FM-1 Doom UBOOT `app.bin` input
 
 The current low-memory E1M1 build has a real FM-1 SDK `app_main`. It creates a
 separate Doom task so SDK event dispatch continues. The task validates a local
@@ -34,21 +34,32 @@ python tools/build_target_candidate.py build\menu-ui-4k.wad --fm1-root F:\dev\fm
 The builder requires the pinned SDK and a reviewed local FM-1 boot baseline.
 It verifies every FMD1 block and CRC, checks that the exact archive bytes land
 in the ELF's read-only `.text` and extracted app image, then enforces the stock
-602,112 B app allocation and 523,596 B RAM0 limit. It compiles the current
+584,956 B V14/v32 application slot and 523,596 B RAM0 limit. It compiles the current
 board root and LCD/key sources; unchanged baseline boot sources must still
 match their recorded hashes. Outputs are
 `build/target-candidate/fm1-doom-candidate.elf`,
-`build/target-candidate/fm1-doom-candidate.app.bin`, and
-`build/target-candidate/build-manifest.json`. The raw `.app.bin` is **not** an
-update package and must not be flashed as one.
+`build/target-candidate/fm1-doom-candidate.app.bin`,
+`build/target-candidate/app.bin`, and
+`build/target-candidate/build-manifest.json`. **Use `app.bin` as the plain
+application input for a WL82 UBOOT flow that accepts the SDK's `-app app.bin`
+format.** It is the exact concatenation of `.text`, `.data`, `.dynamic_data`,
+`.ram0_data`, and `.cache_ram_data`, with XIP entry `0x02000120`. It is not a
+complete 1 MiB flash dump or an encrypted raw application region; the UBOOT
+tool must handle its normal encoding, directory CRCs, and placement. Never
+write these plain bytes directly at physical flash address `0x4120`.
+
+The builder sets `flashable: true` for this UBOOT **input format** and
+`hardware_boot_verified: false`. The generated file includes derived game
+data and is ignored by Git; keep it private. Check its size and SHA-256
+against the manifest before loading it in your UBOOT program.
 
 For the locally tested shareware 1.8 archive (117,590 B), the candidate links
 at 482,448 B app bytes. `.ram0_data` is 28,144 B and `.ram0_bss` is 447,080 B.
 The linker heap span is 48,332 B before the 8 KiB Doom task stack, runtime
 allocations, and zliblite scratch. The archive is included in those app bytes,
 not added afterward. The ELF/app bytes and archive hashes are in the local
-manifest. This proves an offline link and static placement, not boot or runtime
-memory safety.
+manifest. This proves the UBOOT input's offline layout and static placement,
+not boot or runtime memory safety.
 
 ## Validation and remaining gates
 
@@ -61,5 +72,5 @@ memory safety.
   decoder heap use, task stack, LCD/key behavior, and the full ELF/update
   layout. Sound, USB recovery, and 30 completed distinct gameplay frames/s
   remain unimplemented or unmeasured.
-- Preserve the known-good installed image and a reviewed restore path before
+- Preserve the known-good installed v32 image and a reviewed restore path before
   any physical write. No device operation is performed by the builder.
