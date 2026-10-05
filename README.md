@@ -16,10 +16,11 @@ nonfunctional file shims; a real Doom application has not been linked, connected
 physical LCD/key scanner, or run on the device.
 See [PORT_STATUS.md](PORT_STATUS.md) and [issue #1](https://github.com/Keitark/fm1-doom/issues/1).
 
-An experimental 160×100 direct-E1M1 build renders the selected 8×8 assets
-with a small health/ammo HUD. Its no-UI archive is 79,785 B with a 4 KiB
-decode cache; a 32-bit host completed 300 moving ticks with a 296 KiB Doom
-zone. The offline size arithmetic now fits the stock flash allocation and
+An experimental 160×100 direct-E1M1 build renders gameplay as exact 8×8 LCD
+blocks and scales the original Doom menu images to fit the screen. The menu
+offers New Game and graphic detail, with no custom menu text. Its archive is
+117,590 B with a 4 KiB decode cache; a 32-bit host exercised the menu at a
+296 KiB Doom zone. The offline size arithmetic fits the stock flash allocation and
 nominal SRAM, but excludes the real SDK task, stack, decoder scratch, and board
 bindings. See the [reproduction and limits](LOW_MEMORY_EXPERIMENT.md).
 
@@ -45,8 +46,9 @@ containing E1M1, needed graphics and sprites, and coarse 8×8 asset pixels.
 The stage tool does not include game data in this repository. With `--silent`,
 the engine's still-referenced E1M1 music lump becomes a zero-length marker;
 this saves 17,283 bytes of raw data and about 17 KiB of host zone use. These options
-target direct E1M1 boot with sound disabled; other levels, menus, and completion
-screens are not yet validated.
+target direct E1M1 boot with sound disabled; other levels and completion
+screens are not yet validated. The low-memory menu profile below is the
+current first-stage build.
 
 ```powershell
 python tools/stage_wad.py C:\path\to\doom1.wad build\stage.wad --map E1M1 --silent --prune-graphics --prune-sprites --no-attract-art --pixelate 8
@@ -80,11 +82,11 @@ For a host-only memory check, set `FM1_DOOM_ZONE_KIB` before running the host
 binary. The reduced E1M1 booted at 768 KiB; 640 KiB failed a 64,040-byte
 allocation. This test does not account for SDK, stack, or screen RAM.
 
-For a direct E1M1 first stage, add `--no-ui` to the stage command and use the
-generated 160×100 engine. This also removes menu, intermission, status, and
-text HUD graphics; it cannot support level completion or menus. The resulting
-WAD is 361,801 B and its 4 KiB block FMD1 archive is 79,785 B on the tested
-shareware input. `LOW_MEMORY_EXPERIMENT.md` has the exact build and run commands.
+For the current direct E1M1 first stage, use `--no-ui --menu-ui` and the
+generated 160×100 engine. This retains original menu images while removing
+intermission, status, and text HUD graphics. The resulting WAD is 465,581 B
+and its 4 KiB block FMD1 archive is 117,590 B on the tested shareware input.
+`LOW_MEMORY_EXPERIMENT.md` has the exact build and run commands.
 
 With the clean pinned SDK and toolchain from the existing
 [FM-1 board project](https://github.com/Keitark/fm1-tracker), check pi32v2
@@ -121,7 +123,7 @@ deliberately nonfunctional file-operation shims and are never firmware candidate
 | 14, 17, 16, 18 | Left, forward, backward, right |
 | 40, 38 | Fire, use |
 | 15, 20 | Run, strafe modifier |
-| 19, 22 | Menu, enter (slot 19 disabled in the no-UI build) |
+| 19, 22 | Menu/back, enter; fire also selects in the menu |
 | 21, 23 | Weapons 1, 2 |
 
 The slot assignments use the recovered FM-1 scanner table from the board
@@ -130,9 +132,9 @@ project. They still need gameplay acceptance on the physical key matrix.
 ## Why this is not ready to install
 
 The stock V15 app allocation is 602,112 B. The direct-E1M1 Doom-only size
-probe has 363,888 B of app sections before data; adding the 79,785 B archive
-gives 443,673 B. It links a fixed 296 KiB target zone and 4 KiB archive cache
-with 477,656 B total static RAM, leaving a 45,900 B linked heap span. The
+probe has 363,344 B of app sections before data; adding the 117,590 B archive
+gives 480,934 B. It links a fixed 296 KiB target zone and 4 KiB archive cache
+with 477,416 B total static RAM, leaving a 46,124 B linked heap span. The
 probe's `app_main`
 does not start Doom and its file shims are nonfunctional. Stacks, SDK heap,
 decompressor scratch, flash placement, and real board services are not yet

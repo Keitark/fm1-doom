@@ -7,7 +7,7 @@
 
 static uint64_t keys;
 static unsigned calls;
-static uint16_t first, last, center;
+static uint16_t first, last, center, block_edge, next_block;
 static uint64_t read_keys(void *u) { (void)u; return keys; }
 static uint32_t ticks(void *u) { (void)u; return 123u; }
 static void sleep_ms(void *u, uint32_t ms) { (void)u; (void)ms; }
@@ -15,7 +15,11 @@ static int rows(void *u, unsigned y, unsigned count, const uint8_t *p)
 {
     (void)u;
     if (count != FM1_DOOM_STRIP_ROWS || y != calls * FM1_DOOM_STRIP_ROWS) return -1;
-    if (!calls) first = (uint16_t)((p[0] << 8u) | p[1]);
+    if (!calls) {
+        first = (uint16_t)((p[0] << 8u) | p[1]);
+        block_edge = (uint16_t)((p[14] << 8u) | p[15]);
+        next_block = (uint16_t)((p[16] << 8u) | p[17]);
+    }
     if (y <= 120u && y + count > 120u) {
         unsigned offset = (120u - y) * FM1_DOOM_WIDTH * 2u + 120u * 2u;
         center = (uint16_t)((p[offset] << 8u) | p[offset + 1u]);
@@ -40,13 +44,27 @@ int main(void)
     palette[6 + 1] = 255; /* index 2: green */
     palette[9 + 2] = 255; /* index 3: blue */
     screen[0] = 1;
+#if FM1_DOOM_SOURCE_WIDTH == 160 && FM1_DOOM_SOURCE_HEIGHT == 100
+    screen[((120u / 8u) * 93u / 28u) * FM1_DOOM_SOURCE_WIDTH
+           + (120u / 8u) * FM1_DOOM_SOURCE_WIDTH / 30u] = 2;
+    screen[((120u * FM1_DOOM_SOURCE_HEIGHT) / FM1_DOOM_HEIGHT) * FM1_DOOM_SOURCE_WIDTH
+           + (120u * (FM1_DOOM_SOURCE_WIDTH - 1u)) / (FM1_DOOM_WIDTH - 1u)] = 3;
+#else
     screen[((120u * FM1_DOOM_SOURCE_HEIGHT) / FM1_DOOM_HEIGHT) * FM1_DOOM_SOURCE_WIDTH
            + (120u * (FM1_DOOM_SOURCE_WIDTH - 1u)) / (FM1_DOOM_WIDTH - 1u)] = 2;
+#endif
     screen[(FM1_DOOM_SOURCE_HEIGHT - 1) * FM1_DOOM_SOURCE_WIDTH
            + FM1_DOOM_SOURCE_WIDTH - 1] = 3;
     fm1_doom_palette(&port, palette);
     CHECK(fm1_doom_present(&port, screen) == 0);
     CHECK(calls == FM1_DOOM_HEIGHT / FM1_DOOM_STRIP_ROWS && first == 0xf800u && center == 0x07e0u && last == 0x001fu);
+#if FM1_DOOM_SOURCE_WIDTH == 160 && FM1_DOOM_SOURCE_HEIGHT == 100
+    CHECK(block_edge == 0xf800u && next_block == 0);
+    port.menu_visible = 1;
+    calls = 0;
+    CHECK(fm1_doom_present(&port, screen) == 0);
+    CHECK(center == 0x001fu);
+#endif
     CHECK(!fm1_doom_next_key(&port, &pressed, &key));
     keys = (UINT64_C(1) << 14) | (UINT64_C(1) << 40);
     CHECK(fm1_doom_next_key(&port, &pressed, &key) && pressed && key == KEY_LEFTARROW);
@@ -56,12 +74,8 @@ int main(void)
     CHECK(fm1_doom_next_key(&port, &pressed, &key) && !pressed && key == KEY_LEFTARROW);
     CHECK(!fm1_doom_next_key(&port, &pressed, &key));
     keys = (UINT64_C(1) << 19) | (UINT64_C(1) << 40);
-#if FM1_DOOM_SOURCE_WIDTH == 160 && FM1_DOOM_SOURCE_HEIGHT == 100
-    CHECK(!fm1_doom_next_key(&port, &pressed, &key)); /* no menu art */
-#else
     CHECK(fm1_doom_next_key(&port, &pressed, &key) && pressed && key == KEY_ESCAPE);
     CHECK(!fm1_doom_next_key(&port, &pressed, &key));
-#endif
     CHECK(fm1_doom_port_init(NULL, &io) == -1);
     puts("FM-1 palette, 240x240 strips, simultaneous key edges and release passed");
     return 0;

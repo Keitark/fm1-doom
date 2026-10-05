@@ -16,6 +16,7 @@ static uint8_t *archive_cache;
 static fm1_fmd_t archive;
 static LARGE_INTEGER perf_frequency;
 static LONGLONG inflate_ticks;
+extern int menuactive;
 
 typedef int (__cdecl *uncompress_fn)(unsigned char *, unsigned long *,
                                       const unsigned char *, unsigned long);
@@ -100,6 +101,7 @@ int main(int argc, char **argv)
     char *doom_argv[13];
     long ticks, zone_mb;
     unsigned i;
+    const char *menu_script = getenv("FM1_DOOM_HOST_MENU_SCRIPT");
     FILE *wad;
     if ((argc != 4 && argc != 5) || (ticks = strtol(argv[2], NULL, 10)) < 1
         || ticks > 10000 || (zone_mb = argc == 5 ? strtol(argv[4], NULL, 10) : 6) < 1
@@ -109,6 +111,13 @@ int main(int argc, char **argv)
     }
     wad = fopen(argv[1], "rb");
     if (!wad) { perror(argv[1]); return 2; }
+    if (menu_script && strcmp(menu_script, "open") && strcmp(menu_script, "options")
+        && strcmp(menu_script, "detail")
+        && strcmp(menu_script, "restart") && strcmp(menu_script, "resume")) {
+        fprintf(stderr, "FM1_DOOM_HOST_MENU_SCRIPT must be open, options, detail, restart, or resume\n");
+        fclose(wad);
+        return 2;
+    }
     {
         const char *setting = getenv("FM1_DOOM_HOST_KEYS");
         if (setting && *setting) {
@@ -139,10 +148,37 @@ int main(int argc, char **argv)
     doom_argv[9] = "-mb"; doom_argv[10] = argc == 5 ? argv[4] : "6";
     doom_argv[11] = "-nogui"; doom_argv[12] = NULL;
     doomgeneric_Create(12, doom_argv);
-    for (i = 0; i < (unsigned)ticks; ++i) doomgeneric_Tick();
+    for (i = 0; i < (unsigned)ticks; ++i) {
+        if (menu_script) {
+            scripted_keys = i >= 4 && i < 15 ? UINT64_C(1) << 19 : 0;
+            if (strcmp(menu_script, "open")) {
+                if (i >= 22 && i < 33 && (!strcmp(menu_script, "options")
+                    || !strcmp(menu_script, "detail")))
+                    scripted_keys = UINT64_C(1) << 16;
+                if (i >= 40 && i < 51 && (!strcmp(menu_script, "options")
+                    || !strcmp(menu_script, "detail")
+                    || !strcmp(menu_script, "restart")))
+                    scripted_keys = UINT64_C(1) << 22;
+                if (i >= 58 && i < 69 && !strcmp(menu_script, "detail"))
+                    scripted_keys = UINT64_C(1) << 40;
+                if (i >= 22 && i < 33 && !strcmp(menu_script, "restart"))
+                    scripted_keys = UINT64_C(1) << 22;
+                if (i >= 22 && i < 33 && !strcmp(menu_script, "resume"))
+                    scripted_keys = UINT64_C(1) << 19;
+            }
+        }
+        doomgeneric_Tick();
+    }
+    if (menu_script && (menuactive != (!strcmp(menu_script, "open")
+                                 || !strcmp(menu_script, "options")
+                                 || !strcmp(menu_script, "detail")))) {
+        fprintf(stderr, "Menu script did not reach the expected open/closed state\n");
+        return 1;
+    }
     if (!strips || save_ppm(argv[3])) return 1;
     printf("Rendered %u LCD strips over %ld engine ticks to %s\n", strips, ticks, argv[3]);
     printf("Purgeable/free Doom zone bytes after run: %d\n", Z_FreeMemory());
+    printf("Menu active after run: %d\n", menuactive);
     if (archive_image) {
         printf("FMD1 decode: %u blocks, %llu compressed bytes, %.3f ms host inflate time\n",
                archive.block_decodes, (unsigned long long)archive.compressed_bytes_decoded,

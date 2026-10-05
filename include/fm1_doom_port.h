@@ -30,6 +30,7 @@ typedef struct {
     uint64_t reported_keys;
     uint64_t sampled_keys;
     uint64_t pending_keys;
+    int menu_visible;
     uint8_t strip[FM1_DOOM_WIDTH * FM1_DOOM_STRIP_ROWS * 2u];
 } fm1_doom_port;
 

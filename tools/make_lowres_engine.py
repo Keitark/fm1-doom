@@ -1,7 +1,7 @@
 """Create a disposable 160x100 Doomgeneric source variant under build/.
 
 The pinned upstream submodule is never edited. This direct-E1M1 experiment
-omits the legacy status bar and text UI; the adapter draws a small HUD.
+uses a compact HUD and original menu patches drawn at half size.
 """
 from pathlib import Path
 import shutil
@@ -25,7 +25,7 @@ def replace_function(path: Path, signature: str, replacement: str) -> None:
     if source.count(signature) != 1:
         raise ValueError(f"unexpected function layout: {path.name}: {signature}")
     start = source.index(signature)
-    body = source.index("{", start + len(signature))
+    body = source.index("{", start + len(signature) - 1)
     depth = 0
     for end in range(body, len(source)):
         if source[end] == "{":
@@ -77,6 +77,80 @@ def main() -> None:
     for name in ("HU_Drawer", "HU_Erase", "HU_Ticker"):
         replace_function(headsup, f"void {name}(void)",
                          f"void {name}(void)\n{{\n    /* Text UI is omitted. */\n}}")
+    menu = TARGET / "m_menu.c"
+    menu_source = menu.read_text(encoding="utf-8")
+    marker = '#include "m_menu.h"'
+    if menu_source.count(marker) != 1:
+        raise ValueError("unexpected m_menu.h inclusion")
+    menu_source = menu_source.replace(marker, marker + '''
+
+/* Original menu patches have 320x200 coordinates; sample them into 160x100. */
+static void FM1_DrawPatchHalf(int x, int y, patch_t *patch)
+{
+    int sx, sy, dx, dy;
+    column_t *column;
+    const byte *pixels;
+    x -= SHORT(patch->leftoffset);
+    y -= SHORT(patch->topoffset);
+    for (sx = 0; sx < SHORT(patch->width); ++sx)
+    {
+        dx = (x + sx) / 2;
+        if ((x + sx) < 0 || ((x + sx) & 1) || dx >= SCREENWIDTH)
+            continue;
+        column = (column_t *)((byte *)patch + LONG(patch->columnofs[sx]));
+        while (column->topdelta != 0xff)
+        {
+            pixels = (const byte *)column + 3;
+            for (sy = 0; sy < column->length; ++sy)
+            {
+                int py = y + column->topdelta + sy;
+                dy = py / 2;
+                if (py >= 0 && !(py & 1) && dy < SCREENHEIGHT)
+                    I_VideoBuffer[dy * SCREENWIDTH + dx] = pixels[sy];
+            }
+            column = (column_t *)((byte *)column + column->length + 4);
+        }
+    }
+}
+#define V_DrawPatchDirect FM1_DrawPatchHalf
+''')
+    menu.write_text(menu_source, encoding="utf-8")
+    replace_once(menu, "    main_end,\n    NULL,\n    MainMenu,", "    2,\n    NULL,\n    MainMenu,")
+    replace_once(menu, "    newg_end,\t\t// # of menu items\n    &EpiDef,",
+                 "    4,\t\t// nightmare excluded from low-memory profile\n    &MainDef,")
+    replace_function(menu, "void M_NewGame(int choice)\n{",
+                     "void M_NewGame(int choice)\n{\n"
+                     "    (void)choice;\n    M_SetupNextMenu(&NewDef);\n}")
+    source = menu.read_text(encoding="utf-8")
+    start = source.index("menuitem_t OptionsMenu[]=")
+    end = source.index("menu_t  OptionsDef =", start)
+    source = source[:start] + '''menuitem_t OptionsMenu[]=
+{
+    {1,"M_DETAIL", M_ChangeDetail,'g'}
+};
+
+''' + source[end:]
+    menu.write_text(source, encoding="utf-8")
+    replace_once(menu, "    opt_end,\n    &MainDef,\n    OptionsMenu,",
+                 "    1,\n    &MainDef,\n    OptionsMenu,")
+    replace_function(menu, "void M_DrawOptions(void)\n{",
+                     "void M_DrawOptions(void)\n{\n"
+                     "    V_DrawPatchDirect(108, 15,\n"
+                     "        W_CacheLumpName(DEH_String(\"M_OPTTTL\"), PU_CACHE));\n"
+                     "    V_DrawPatchDirect(260, OptionsDef.y,\n"
+                     "        W_CacheLumpName(DEH_String(detailNames[detailLevel]), PU_CACHE));\n"
+                     "}")
+    replace_once(menu, "    if (key == -1)\n\treturn false;",
+                 "    if (key == -1)\n\treturn false;\n"
+                 "    if (menuactive && key == KEY_FIRE) key = key_menu_forward;\n"
+                 "    if (menuactive && key == KEY_USE) key = key_menu_back;")
+    replace_once(menu, "\tcurrentMenu->lastOn = itemOn;\n\tM_ClearMenus ();\n\tS_StartSound(NULL,sfx_swtchx);\n\treturn true;",
+                 "\tcurrentMenu->lastOn = itemOn;\n"
+                 "\tif (currentMenu->prevMenu)\n"
+                 "\t{\n\t    currentMenu = currentMenu->prevMenu;\n"
+                 "\t    itemOn = currentMenu->lastOn;\n\t}\n"
+                 "\telse M_ClearMenus ();\n"
+                 "\tS_StartSound(NULL,sfx_swtchx);\n\treturn true;")
     # This first-stage build fixes skill 1 and has no DeHackEd patches, so the
     # large state/actor definition tables can live in XIP flash instead of RAM.
     game = TARGET / "g_game.c"
@@ -117,7 +191,7 @@ def main() -> None:
     replace_once(TARGET / "r_state.h", "extern int\t\tviewangletox[FINEANGLES/2];",
                  "extern short viewangletox[FINEANGLES/2];")
     print(TARGET)
-    print("Experimental 160x100 engine generated with compact HUD and no text UI.")
+    print("Experimental 160x100 engine generated with compact HUD and half-size Doom menu.")
 
 
 if __name__ == "__main__":

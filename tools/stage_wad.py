@@ -75,8 +75,8 @@ def keep_first_map(lumps: list[Lump], map_name: bytes, silent: bool,
     return selected
 
 
-def omit_direct_boot_ui(lumps: list[Lump]) -> list[Lump]:
-    """Omit menu, intermission, status and text HUD art for the lowres build."""
+def omit_direct_boot_ui(lumps: list[Lump], menu_ui: bool = False) -> list[Lump]:
+    """Omit unused lowres UI art, optionally retaining original menu patches."""
     output = []
     namespace = b""
     for lump in lumps:
@@ -84,7 +84,9 @@ def omit_direct_boot_ui(lumps: list[Lump]) -> list[Lump]:
             namespace = lump.name[:1]
         elif lump.name in (b"S_END", b"P_END", b"F_END"):
             namespace = b""
-        if not namespace and lump.name.startswith((b"M_", b"WI", b"ST")):
+        if not namespace and lump.name.startswith((b"WI", b"ST")):
+            continue
+        if not namespace and not menu_ui and lump.name.startswith(b"M_"):
             continue
         output.append(lump)
     return output
@@ -299,6 +301,8 @@ def main() -> None:
                         help="Drop title/help/credits images for direct E1M1 boot")
     parser.add_argument("--no-ui", action="store_true",
                         help="Drop menu/intermission/status/text art for the generated 160x100 direct-E1M1 build")
+    parser.add_argument("--menu-ui", action="store_true",
+                        help="With --no-ui, retain original M_ menu patches for the half-size menu")
     parser.add_argument("--pixelate", type=int, choices=(1, 2, 4, 8, 16), default=1,
                         help="Coarsen patch/sprite/flat pixels while keeping logical dimensions")
     args = parser.parse_args()
@@ -316,7 +320,9 @@ def main() -> None:
     if args.no_ui:
         if map_name != b"E1M1" or not args.no_attract_art:
             parser.error("--no-ui requires --map E1M1 and --no-attract-art")
-        stage = omit_direct_boot_ui(stage)
+        stage = omit_direct_boot_ui(stage, args.menu_ui)
+    elif args.menu_ui:
+        parser.error("--menu-ui requires --no-ui")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     length = write_wad(args.output, stage)
     packed = len(zlib.compress(args.output.read_bytes(), 9))

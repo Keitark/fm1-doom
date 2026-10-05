@@ -15,13 +15,16 @@
 | Reduced E1M1 host zone diagnostic | 768 KiB passes 120 ticks for 4×4, 8×8, and 16×16 assets; 640 and 512 KiB fail a 64,040-byte allocation with 4×4 assets | Does not include SDK/static RAM or a complete playthrough |
 | Experimental 160×100 engine, selected 8×8 E1M1 | 448 KiB zone passes 120 host ticks with compact HUD; 384 KiB fails allocation | Generated source copy, short idle run, no FM-1 execution |
 | Direct-E1M1 no-UI stage, 8×8 assets | 361,801 B raw; 79,785 B FMD1 with 4 KiB blocks/cache | Menus, text HUD and completion screens omitted |
+| Direct-E1M1 menu stage, 8×8 assets | 465,581 B raw; 117,590 B FMD1 with 4 KiB blocks/cache | Original menu patches retained, half-size menu rendered; no game data committed |
 | Direct-E1M1 host smoke | 32-bit host passes 120 idle ticks and 300 moving ticks with a 296 KiB zone; 4 KiB FMD1 produces the original final image hash on 64-bit host | No full-level traversal, hardware frame timing or audio |
+| Menu and 8×8 LCD host smoke | 32-bit host passes 80 ticks each for open, options, resume, and New Game restart at a 296 KiB zone; menu art and exact 8×8 gameplay blocks inspected in 240×240 output | Host only; menu image uses finer scaling |
 | FMD1 Python and C tests | Pass; roundtrip, block crossing, cache, bounds, CRC | C unit test uses an injected decoder |
 | pi32v2 compile of six port/archive sources | Pass with pinned AC79 SDK headers/toolchain | No Doom core, zliblite link, or SDK link |
 | pi32v2 compile of 79 original engine files | Pass with pinned SDK toolchain | Compile only |
 | Offline SDK+Doom size probe, adapter rooted | Links; app sections 434,384 B without WAD; `.ram0_data` 68,048 B and `.ram0_bss` 342,080 B | Retains NES app and uses nonfunctional libc shims; not runnable Doom firmware |
 | Experimental 160×100 size probe | Links; 433,296 B app sections before WAD, 343,088 B static RAM | Same probe limitations; selected archive makes 624,830 B before integration |
 | Direct-E1M1 Doom-only size probe | Links without NES app; 363,888 B app sections before WAD; fixed 296 KiB zone and 4 KiB cache included in 477,656 B static RAM; 45,900 B linked heap span | Empty `app_main`, nonfunctional libc shims; not bootable Doom |
+| Current menu Doom-only size probe | Links without NES app; 363,344 B app sections before WAD; 477,416 B static RAM; 46,124 B linked heap span; 480,934 B app plus FMD1 | Same probe limitations; not bootable Doom |
 | Current eight-row host output | 4,860 callbacks over 120 ticks; exact image hash match with four-row output | No hardware timing or FPS result |
 | FM-1 boot, LCD, keys, audio | Not attempted | No installable image |
 
@@ -32,7 +35,8 @@ compatibility test of the original engine, not a performance measurement.
 The E1M1 data test used a separately obtained Doom shareware 1.8 IWAD; none of
 that input, the derived WAD, or the FMD1 archive is committed.
 The host-only `FM1_DOOM_ZONE_KIB` setting overrides Doom's `-mb` minimum.
-The 296 KiB result applies only to the generated, no-UI 32-bit build. That
+The 296 KiB result applies to the generated 32-bit low-memory builds, including
+the current menu profile. That
 build puts the state and actor definition tables in flash and bounds the
 renderer to 64 visplanes. The older 768 KiB result applies to the normal
 320×200 engine. These different profiles should not be mixed.
@@ -54,11 +58,11 @@ The [RP2040 Doom port](https://github.com/kilograham/rp2040-doom) demonstrates
 that a reworked original engine can fit 264 KiB of RAM by keeping immutable
 level data in flash. Its [memory notes](https://kilograham.github.io/rp2040-doom/speed_and_ram.html)
 describe why a straight Chocolate Doom build does not fit. The current
-direct-E1M1 FMD1 archive is 79,785 B with a 4 KiB cache; the reader has not
-been bound to physical flash. The Doom-only probe's 363,888 B app sections
-plus this archive total 443,673 B, below the stock V15 602,112 B app
+direct-E1M1 menu FMD1 archive is 117,590 B with a 4 KiB cache; the reader has not
+been bound to physical flash. The Doom-only probe's 363,344 B app sections
+plus this archive total 480,934 B, below the stock V15 602,112 B app
 allocation. Its fixed 296 KiB zone and 4 KiB archive cache are already in
-the 477,656 B static RAM count. The linker reports a 45,900 B heap span.
+the 477,416 B static RAM count. The linker reports a 46,124 B heap span.
 This does not prove a real build fits: task stacks, SDK heap, zliblite scratch,
 board services, and protected flash layout are still missing. The probe's
 empty `app_main` and libc shims prevent Doom from running.

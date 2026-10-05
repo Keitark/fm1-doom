@@ -85,7 +85,8 @@ void I_UpdateNoBlit(void) { }
 void I_FinishUpdate(void)
 {
 #if FM1_DOOM_SOURCE_WIDTH == 160 && FM1_DOOM_SOURCE_HEIGHT == 100
-    hud_draw();
+    if (!menuactive) hud_draw();
+    fm1_doom_active_port()->menu_visible = menuactive;
 #endif
     if (fm1_doom_present(fm1_doom_active_port(), I_VideoBuffer))
         I_Error("FM-1 LCD transfer failed");

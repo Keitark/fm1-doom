@@ -9,9 +9,7 @@ typedef struct { uint8_t slot, key; } key_binding;
 static const key_binding bindings[] = {
     {14, KEY_LEFTARROW}, {15, KEY_RSHIFT}, {16, KEY_DOWNARROW},
     {17, KEY_UPARROW}, {18, KEY_RIGHTARROW},
-#if FM1_DOOM_SOURCE_WIDTH != 160 || FM1_DOOM_SOURCE_HEIGHT != 100
     {19, KEY_ESCAPE},
-#endif
     {20, KEY_RALT}, {21, '1'}, {22, KEY_ENTER},
     {23, '2'}, {38, KEY_USE}, {40, KEY_FIRE}
 };
@@ -43,11 +41,25 @@ int fm1_doom_present(fm1_doom_port *port, const uint8_t indexed[FM1_DOOM_SOURCE_
     if (!port || !indexed) return -1;
     for (y = 0; y < FM1_DOOM_HEIGHT; y += FM1_DOOM_STRIP_ROWS) {
         for (row = 0; row < FM1_DOOM_STRIP_ROWS; ++row) {
-            unsigned sy = ((y + row) * FM1_DOOM_SOURCE_HEIGHT) / FM1_DOOM_HEIGHT;
+            unsigned display_y = y + row;
+            unsigned sy = (display_y * FM1_DOOM_SOURCE_HEIGHT) / FM1_DOOM_HEIGHT;
+#if FM1_DOOM_SOURCE_WIDTH == 160 && FM1_DOOM_SOURCE_HEIGHT == 100
+            if (!port->menu_visible) {
+                /* 30x28 game samples become exact 8x8 LCD blocks. Keep the
+                   final 16 LCD rows fine enough for the compact HUD. */
+                sy = display_y < 224u
+                   ? (display_y / 8u) * 93u / 28u
+                   : 93u + (display_y - 224u) * 7u / 16u;
+            }
+#endif
             const uint8_t *src = indexed + sy * FM1_DOOM_SOURCE_WIDTH;
             uint8_t *dst = port->strip + row * FM1_DOOM_WIDTH * 2u;
             for (x = 0; x < FM1_DOOM_WIDTH; ++x) {
                 unsigned sx = x * (FM1_DOOM_SOURCE_WIDTH - 1u) / (FM1_DOOM_WIDTH - 1u);
+#if FM1_DOOM_SOURCE_WIDTH == 160 && FM1_DOOM_SOURCE_HEIGHT == 100
+                if (!port->menu_visible && display_y < 224u)
+                    sx = (x / 8u) * FM1_DOOM_SOURCE_WIDTH / 30u;
+#endif
                 uint16_t pixel = port->palette[src[sx]];
                 dst[x * 2u] = (uint8_t)(pixel >> 8u);
                 dst[x * 2u + 1u] = (uint8_t)pixel;
