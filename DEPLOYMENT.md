@@ -8,12 +8,18 @@ key-scanner errors in the revised build. The previous build's movement/menu/fire
 worked after a power cycle, then keys stopped with `key_error=-3` while frames
 continued. That scanner clock/recovery failure is corrected; sustained physical
    input and the new presentation toggle were confirmed working by the user.
-The current audio build is installed and full-readback verified. The user hears
+The earlier `fc03a11` audio build was installed and full-readback verified. The user heard
 music and sound effects. A 105-second Detailed-mode capture reports zero
 engine/LCD/key/audio/music errors, successful music looping and roughly 10.9
 frame-counter increments per second. Instrument quality and mix balance are
 being checked. The requested 30 FPS target is not met; this is not a
 distinct-frame benchmark or a full E1M1 traversal.
+
+The newer `3318678` OPL/synth/knob build is installed and readback-verified,
+but the user reports no audio and restricted movement near spawn after cold
+boot. COM6 enumerates but requests time out. A compiled USB task stack overflow
+is confirmed and repaired in source; device installation of the repair and
+audio/map diagnosis are pending.
 
 ## Graphics/input milestone artifacts
 
@@ -143,3 +149,34 @@ The build passed 43 Python tests, four focused audio/protocol/formatter CTests,
 target compile/link and all 411 frozen source/config/header hashes. The builder
 manifest describes offline readiness; these separate receipts establish actual
 installation and boot.
+
+## OPL/synth/knob installation and USB regression
+
+Revision `3318678` produced a 554,800 B app, SHA-256
+`a908bde332159a94b3ab86f8eb769cb103e3e70fd135087cb319383763f71360`.
+The writer verified all 136 changed sectors and one complete 1 MiB readback,
+SHA-256 `ebbc6bcda76c51ccf84b32e3c528115c68c5c8d29ac7a40627eab1ab6146b95f`.
+The directory sector was written last; boot/config/tail were preserved.
+Protected receipt: `runs/67007d29eb024b52b33d9434d41e5fba` in the session above.
+One reset (`runs/2d9bfcf6251140fb937cfa866290e27a`) completed. Observation failed
+(`runs/94481b75111345a7aa26c06d791a209c`); a physical cold boot did not recover
+USB or sound. No reset or write retry was issued.
+
+The final ELF has a 3,192 B USB task frame. Periodic status formatting adds
+956 B plus the integer formatter closure, reaching 4,320 B on a 4,096 B task
+stack. This is a confirmed overflow; it does not independently establish the
+cause of the silence or the user's navigation report.
+
+The source repair prevents LTO from merging mutually exclusive reply buffers.
+Its app is 554,768 B, SHA-256
+`64194b06e5b372e0b671b690e04b7a90aad56a89fc59380ad055812f74a6e373`.
+Task frame: 136 B; deepest diagnostic chain: 1,424 B. The builder now reads
+actual PI32 register saves/local allocations from the final ELF and enforces
+the diagnostic bound plus 1,024 B SDK margin within the unchanged task stack.
+Separate audio interrupt stack usage is 384 B on a 4,096 B SSP. Runtime USB
+high-water, audio IRQ timing, knob and map capture still require device checks.
+
+The failed observation latch and its verified readback are preserved. A fresh
+protected writer session can use that readback as its baseline; its launcher
+requires a new Windows UAC approval. Serial UBOOT is unavailable while USB is
+broken, so the repair requires physical UBOOT entry.

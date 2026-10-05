@@ -13,6 +13,7 @@ import subprocess
 import sys
 
 from pack_archive import unpack
+from pi32_stack import inspect as inspect_stack, usb_diagnostic_budget
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_LIMIT = 602_112  # stock V15 application allocation, not whole flash
@@ -267,6 +268,7 @@ def main() -> int:
     common_configuration = [ROOT / "CMakeLists.txt", ROOT / "tools/make_lowres_engine.py",
                             generated / "doomgeneric.vcxproj", board.MAKE]
     source_closure = set(common_configuration + [ROOT / "tools/build_target_candidate.py",
+                         ROOT / "tools/pi32_stack.py",
                          ROOT / "tools/compile_target_engine.py", ROOT / "tools/compile_target_port.py",
                          usb / "vendor_overlay.py"])
     source_closure.update(ROOT / "tools" / name
@@ -453,6 +455,11 @@ def main() -> int:
             raise ValueError(f"unsupported external RAM section is nonempty: {name}")
     nm = run([str(board.TC / "llvm-nm.exe"), "-n", str(elf)])
     filesystem = verify_sdfilesystem(nm)
+    usb_stack_report = inspect_stack(elf, board.TC)
+    usb_stack_bytes = next(task["stack_bytes"] for task in task_budget["tasks"]
+                           if task["name"] == "doom_usb")
+    usb_stack_budget = usb_diagnostic_budget(usb_stack_report, usb_stack_bytes)
+    (out / "usb-stack-audit.json").write_text(json.dumps(usb_stack_report, indent=2) + "\n", encoding="utf-8")
     for name in retained:
         if not re.search(r"^[0-9a-fA-F]+\s+[A-Za-z]\s+" + re.escape(name) + r"$", nm, re.M):
             raise ValueError(f"required Doom/CDC link symbol is missing: {name}")
@@ -527,6 +534,7 @@ def main() -> int:
         "linked_heap_bytes_before_runtime": heap_bytes,
         "startup_heap_budget": task_budget,
         "filesystem": filesystem,
+        "usb_diagnostic_stack": usb_stack_budget,
         "audio": {"output": "IIS_PORTC ALINK0 channel 3 signed 24-bit stereo at 44100 Hz",
                   "sfx_voices": 2, "private_xip_banks": bank_link_info,
                   "dynamic_dma_bytes": audio_allocations["total_requested_bytes"]},

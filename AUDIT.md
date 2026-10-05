@@ -61,8 +61,8 @@ blocks and all 160×93 gameplay samples, with detailed HUD in both modes.
 - USB GAME/frame capture uses existing pixels/palette and 128 B persistent
   diagnostics state. It releases on disconnect/error/STOP or 15 seconds;
   audio and scanner continue during a brief between-tick game pause.
-- App: 554,800 B, SHA-256
-  `a908bde332159a94b3ab86f8eb769cb103e3e70fd135087cb319383763f71360`.
+- Repaired app: 554,768 B, SHA-256
+  `64194b06e5b372e0b671b690e04b7a90aad56a89fc59380ad055812f74a6e373`.
   Static RAM: 477,912 B; linker heap: 45,644 B; reviewed reserve: 4,096 B.
   This is a static floor, not a runtime free-heap measurement.
 - Python 59/59 and native contracts pass; all 79 engine/7 port sources compile
@@ -73,8 +73,14 @@ blocks and all 160×93 gameplay samples, with detailed HUD in both modes.
   user's small-area report has no reproduced collision defect; actual device
   capture and whole-level traversal remain pending.
 
-This revision is not flashed yet; the FM-1 is disconnected. The 136-sector
-offline plan preserves boot/config/tail and passes update/restore simulation.
+The prior 554,800 B revision `3318678` was flashed, with all 136 changed sectors
+and the complete image readback verified. Cold boot leaves USB requests failing
+and the user reports no audio. The emitted USB task frame is 3,192 B; its
+periodic status chain reaches 4,320 B on a 4,096 B task stack. The repair keeps
+reply buffers in separate frames: task 136 B, diagnostic maximum 1,424 B.
+The builder gates actual emitted frames with 1,024 B additional SDK margin;
+interrupt SSP is separate (audio closure 384 B of 4,096 B).
+Repair installation and the cause of the audio silence remain unverified.
 Physical volume, audio IRQ deadline, screen capture, sustained controls and
 30 FPS remain device checks.
 

@@ -21,19 +21,24 @@ stalled with scanner error `-3` while frames kept advancing. The revised build
 uses a hardware-interpolated scanner clock and continuing recovery with backoff.
 The user now confirms stable controls and both presentation modes; a 60-second
 Detailed-mode capture has zero faults and about 11 counter increments/s.
-The installed audio backend plays original pistol/pickup/oof effects and the
+The earlier `fc03a11` audio backend plays original pistol/pickup/oof effects and the
 E1M1 score through an eight-voice synthesizer; the user confirms hearing music
 and effects. A 105-second Detailed-mode capture has zero reported errors,
 successful music looping and about 10.9 counter increments/s. Instrument
 quality and mix balance are being checked; the 30 FPS target remains open.
 See [audio](AUDIO.md).
-The next source revision adds the PB6 master volume knob, lossless original
+Revision `3318678` adds the PB6 master volume knob, lossless original
 PCM effects, DOS OPL2 music and an E4 switch for the requested VCO/VCF/VCA
 melody treatment. Effects and synth-mode drums are 6 dB quieter. Its local
-app is 554,800 B with 477,912 B static RAM and 4,096 B of reviewed startup
-reserve; physical installation and timing checks are pending.
+app was flashed and readback-verified, but the user reports no audio and USB
+requests fail after a cold boot. LTO merged reply buffers into a 3,192-byte USB
+task frame; its status call chain exceeds the allocated 4 KiB stack.
+The repair keeps reply handlers out of line: the task frame is 136 B and the
+largest diagnostic chain is 1,424 B. The builder now checks the emitted ELF.
+The repaired 554,768 B app retains 477,912 B static RAM and 4,096 B of reviewed
+startup reserve; physical repair installation and audio acceptance are pending.
 USB position/frame diagnostics can inspect the device display with
-`python tools/capture_usb_frame.py --port COM6` after that revision is installed.
+`python tools/capture_usb_frame.py --port COM6` after USB recovery is verified.
 The private `build/target-candidate/app.bin` is the verified plain input for a
 WL82 UBOOT flow accepting SDK `-app app.bin`; see [target candidate](TARGET_CANDIDATE.md)
 for its exact format and limits.

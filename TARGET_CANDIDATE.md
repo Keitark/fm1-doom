@@ -71,11 +71,11 @@ is recorded below. The generated file includes derived game
 data and is ignored by Git; keep it private. Check its size and SHA-256
 against the manifest before loading it in your UBOOT program.
 
-## Current OPL/synth/knob candidate: not installed yet
+## USB stack repair candidate: not installed yet
 
-The local app is 554,800 B, SHA-256
-`a908bde332159a94b3ab86f8eb769cb103e3e70fd135087cb319383763f71360`.
-It leaves 30,156 B in the reviewed application slot. The losslessly compacted
+The local app is 554,768 B, SHA-256
+`64194b06e5b372e0b671b690e04b7a90aad56a89fc59380ad055812f74a6e373`.
+It leaves 30,188 B in the reviewed application slot. The losslessly compacted
 archive is 170,505 B, SHA-256
 `9fca855cbab806ea279510666b13186dbb9aae16c615783dd21df03211f97dcd`.
 Private effect/score/GENMIDI banks are 12,613/10,975/563 B.
@@ -90,10 +90,16 @@ Lossless graphics compaction keeps all 493 lump names/order, original decoded
 patch/texture pixels and complete map data. It does not increase the 4 KiB
 decode cache. See [audio controls and verification](AUDIO.md).
 
-The offline changed-sector plan has 136 sectors with directory last and
-preserves stock boot/config/tail. It has passed update/restore simulation;
-no write of this revision has occurred yet. Physical knob operation, IIS
-deadline, screen capture and sustained controls remain to be checked.
+The prior 554,800 B revision `3318678` was installed with 136 changed sectors
+and a matching complete readback. The user then reported silence; USB failed
+after cold boot. Compiler inlining combined mutually exclusive reply buffers
+in a 3,192 B task frame; the status call chain exceeded its 4,096 B stack.
+The repair emits separate handlers, a 136 B task frame and a maximum 1,424 B
+diagnostic call chain. Its build gate reserves a further 1,024 B for reviewed
+SDK paths and rejects lost handler boundaries, unknown stack writes or nested
+diagnostic calls. This scoped gate does not replace live stack/heap acceptance.
+Physical repair installation, knob operation, IIS deadline, screen capture
+and sustained controls remain to be checked.
 
 ## Historical installed audio application
 

@@ -2,13 +2,16 @@
 
 ## Evidence from this branch
 
-The next OPL/synth/knob revision has built locally but is not installed yet:
-554,800 B app, 170,505 B losslessly compacted archive, 477,912 B static RAM,
-45,644 B linker heap and exactly 4,096 B reviewed startup reserve. It passes
-59 Python tests, target compilation/link, native music/FX/protocol contracts,
-and the complete independent DOS OPL reference. Sixteen-second digital mixes
-have no clipped samples or music errors. Device timing/volume acceptance is
-pending while the FM-1 is disconnected. Historical device evidence follows.
+The OPL/synth/knob revision `3318678` is installed and readback-verified, but
+the user reports silence and USB requests fail after cold boot. An emitted
+3,192 B USB task frame plus status formatting reaches 4,320 B, exceeding its
+4,096 B allocation. The source repair keeps mutually exclusive reply buffers
+in separate frames: task 136 B, maximum diagnostic chain 1,424 B. The builder
+now gates final ELF diagnostic frames with a further 1,024 B SDK margin.
+The repaired app is 554,768 B with the same 170,505 B archive, 477,912 B static
+RAM, 45,644 B heap and 4,096 B reviewed startup reserve. Python contracts,
+target link and native protocol tests pass. Repair installation and physical
+audio/map acceptance are pending. Historical device evidence follows.
 
 The spawn-area report was investigated with both installed and compacted
 assets at a 296 KiB host zone. One F5 press near the first door opens sector 4,

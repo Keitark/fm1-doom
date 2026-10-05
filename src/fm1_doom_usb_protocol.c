@@ -2,6 +2,16 @@
 #include <stdio.h>
 #include <string.h>
 
+/* Keep mutually exclusive reply buffers in separate emitted stack frames.
+ * The target uses LTO and the USB task has a fixed 4096-byte stack. */
+#if defined(_MSC_VER)
+#define USB_NOINLINE __declspec(noinline)
+#elif defined(__GNUC__) || defined(__clang__)
+#define USB_NOINLINE __attribute__((noinline))
+#else
+#error USB protocol requires a compiler noinline attribute
+#endif
+
 void fm1_doom_usb_protocol_reset(fm1_doom_usb_protocol *protocol)
 {
     memset(protocol, 0, sizeof(*protocol));
@@ -23,7 +33,7 @@ void fm1_doom_usb_frame_control_tick(fm1_doom_usb_frame_control *frame, uint32_t
         frame->state = 0;
 }
 
-static void game_status(const fm1_doom_usb_protocol_io *io)
+static USB_NOINLINE void game_status(const fm1_doom_usb_protocol_io *io)
 {
     struct fm1_doom_usb_game game;
     char output[448];
@@ -41,7 +51,7 @@ static void game_status(const fm1_doom_usb_protocol_io *io)
     io->reply(io->context, output);
 }
 
-static void frame_info(const fm1_doom_usb_protocol_io *io)
+static USB_NOINLINE void frame_info(const fm1_doom_usb_protocol_io *io)
 {
     fm1_doom_usb_frame_control frame;
     char output[160];
@@ -54,7 +64,7 @@ static void frame_info(const fm1_doom_usb_protocol_io *io)
     io->reply(io->context, output);
 }
 
-static void frame_read(const char *text, const fm1_doom_usb_protocol_io *io)
+static USB_NOINLINE void frame_read(const char *text, const fm1_doom_usb_protocol_io *io)
 {
     static const char hex[] = "0123456789ABCDEF";
     uint8_t data[FM1_DOOM_USB_FRAME_CHUNK];
@@ -92,7 +102,7 @@ static void frame_read(const char *text, const fm1_doom_usb_protocol_io *io)
     io->reply(io->context, output);
 }
 
-void fm1_doom_usb_protocol_status(const fm1_doom_usb_protocol_io *io)
+USB_NOINLINE void fm1_doom_usb_protocol_status(const fm1_doom_usb_protocol_io *io)
 {
     struct fm1_doom_usb_status status;
     char output[448];
@@ -113,7 +123,7 @@ void fm1_doom_usb_protocol_status(const fm1_doom_usb_protocol_io *io)
     io->reply(io->context, output);
 }
 
-void fm1_doom_usb_protocol_trace(const fm1_doom_usb_protocol_io *io)
+USB_NOINLINE void fm1_doom_usb_protocol_trace(const fm1_doom_usb_protocol_io *io)
 {
     struct fm1_doom_usb_status status;
     char output[352];
@@ -137,7 +147,7 @@ void fm1_doom_usb_protocol_trace(const fm1_doom_usb_protocol_io *io)
     io->reply(io->context, output);
 }
 
-void fm1_doom_usb_protocol_audio(const fm1_doom_usb_protocol_io *io)
+USB_NOINLINE void fm1_doom_usb_protocol_audio(const fm1_doom_usb_protocol_io *io)
 {
     struct fm1_doom_usb_status status;
     char output[512];
@@ -159,7 +169,7 @@ void fm1_doom_usb_protocol_audio(const fm1_doom_usb_protocol_io *io)
     io->reply(io->context, output);
 }
 
-static void command(fm1_doom_usb_protocol *protocol, int isolated, uint32_t now_ms,
+static USB_NOINLINE void command(fm1_doom_usb_protocol *protocol, int isolated, uint32_t now_ms,
                     const fm1_doom_usb_protocol_io *io)
 {
     if (!strcmp(protocol->line, "HELLO")) {

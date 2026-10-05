@@ -1,8 +1,10 @@
 # FM-1 Doom audio
 
-The currently installed `fc03a11` milestone plays music and effects, but uses
-simplified synthesizer timbres and has no physical volume control. The source
-revision described below is being prepared for a new device check.
+The earlier `fc03a11` milestone played music and effects with simplified timbres.
+The installed OPL/synth/knob revision `3318678` is readback-verified, but the user
+reports silence after a cold boot and USB requests fail. A confirmed USB task
+stack overflow is repaired in source; installation and knob diagnostics are
+pending. The overflow is not yet established as the cause of the silence.
 
 ## Output and volume
 
