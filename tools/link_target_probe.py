@@ -54,6 +54,7 @@ def main() -> int:
                "-T" + str(base / "sdk.ld"), "-M=" + str(out / "fm1-doom-size-probe.map"),
                "--wrap=boot_info_init", "--wrap=memory_init", "--undefined=memory_init",
                "--undefined=doomgeneric_Create", "--undefined=doomgeneric_Tick",
+               "--undefined=fm1_doom_bind_io",
                "--undefined=fm1_fmd_zliblite_inflate", "--undefined=fm1_doom_set_wad_archive",
                "--plugin-opt=mcpu=r3", "--plugin-opt=-mattr=+fprev1",
                "--plugin-opt=-pi32v2-large-program=true",

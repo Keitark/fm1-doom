@@ -18,6 +18,8 @@ typedef struct {
     uint32_t wad_size;
     uint32_t block_count;
     uint32_t cached_block;
+    uint32_t block_decodes;
+    uint64_t compressed_bytes_decoded;
     fm1_fmd_inflate_fn inflate;
     void *context;
 } fm1_fmd_t;

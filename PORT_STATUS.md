@@ -6,17 +6,18 @@
 | --- | --- | --- |
 | MSVC Release build | Pass, Doomgeneric plus FM-1 video/input adapter | Host only |
 | `ctest` port contract | Pass, 240×240 palette/strip endpoints and simultaneous key edges | Mock callbacks |
-| Freedoom Phase 1 smoke, 120 engine ticks, 2 MiB zone | Pass; 9,720 four-row strip callbacks; nonflat E1M1 gameplay image | Host file-backed WAD, no sound |
+| Freedoom Phase 1 smoke, 120 engine ticks, 2 MiB zone | Pass; 9,720 four-row strip callbacks in the initial adapter; nonflat E1M1 gameplay image | Host file-backed WAD, no sound |
 | Same smoke, 1 MiB zone | Fail: `Z_Malloc` requested 54,912 more bytes | Shows this engine layout exceeds FM-1 RAM |
-| Doom shareware 1.8, E1M1 only, 4×4 graphics | 846,762-byte WAD; 277,243-byte FMD1 with 4 KiB blocks/cache | No full-level playthrough |
-| Selected 8×8 graphics | 747,056-byte WAD; 199,483-byte FMD1 with 16 KiB blocks/cache | Recognizable boot image; no full-level playthrough |
-| Same E1M1, 16×16 graphics | 697,100-byte WAD; 182,138-byte FMD1 with 16 KiB blocks/cache | Recognizable boot image; no full-level playthrough |
+| Doom shareware 1.8, E1M1 only, 4×4 graphics, silent marker | 829,479-byte WAD; 268,485-byte FMD1 with 4 KiB blocks/cache | No full-level playthrough |
+| Selected 8×8 graphics, silent marker | 729,773-byte WAD; 191,534-byte FMD1 with 16 KiB blocks/cache | Recognizable boot image; no full-level playthrough |
+| Same E1M1, 16×16 graphics, silent marker | 679,817-byte WAD; 174,114-byte FMD1 with 16 KiB blocks/cache | Recognizable boot image; no full-level playthrough |
 | FMD1 direct host read, 120 engine ticks | Pass; exact image hash match with unpacked WAD | Host has 2 MiB zone and zlib DLL |
 | Reduced E1M1 host zone diagnostic | 768 KiB passes 120 ticks for 4×4, 8×8, and 16×16 assets; 640 and 512 KiB fail a 64,040-byte allocation with 4×4 assets | Does not include SDK/static RAM or a complete playthrough |
 | FMD1 Python and C tests | Pass; roundtrip, block crossing, cache, bounds, CRC | C unit test uses an injected decoder |
 | pi32v2 compile of six port/archive sources | Pass with pinned AC79 SDK headers/toolchain | No Doom core, zliblite link, or SDK link |
 | pi32v2 compile of 79 original engine files | Pass with pinned SDK toolchain | Compile only |
-| Offline SDK+Doom size probe | Links; app sections 404,720 B without WAD; `.ram0_data` 66,544 B and `.ram0_bss` 181,472 B | Retains NES app and uses nonfunctional libc shims; not runnable Doom firmware |
+| Offline SDK+Doom size probe, adapter rooted | Links; app sections 434,384 B without WAD; `.ram0_data` 68,048 B and `.ram0_bss` 342,080 B | Retains NES app and uses nonfunctional libc shims; not runnable Doom firmware |
+| Current eight-row host output | 4,860 callbacks over 120 ticks; exact image hash match with four-row output | No hardware timing or FPS result |
 | FM-1 boot, LCD, keys, audio | Not attempted | No installable image |
 
 The first smoke used Freedoom 0.13.0 `freedoom1.wad` from the project's official
@@ -47,13 +48,15 @@ that a reworked original engine can fit 264 KiB of RAM by keeping immutable
 level data in flash. Its [memory notes](https://kilograham.github.io/rp2040-doom/speed_and_ram.html)
 describe why a straight Chocolate Doom build does not fit. The FM-1 still needs
 an engine memory redesign. FMD1 now supplies bounded random reads of the
-selected 8×8 E1M1 WAD in 199,483 bytes with a 16 KiB cache, but the reader is
+selected 8×8 E1M1 WAD in 191,534 bytes with a 16 KiB cache, but the reader is
 not bound to the physical flash map. The current stock V15 application
 allocation is 602,112 bytes, and the
 tracker v31 application occupies 340,912 bytes; an E1M1 archive plus the full
-Doom engine cannot be declared to fit from those figures. The probe's 404,720 B
-app sections plus the selected 8×8 archive total 604,203 B before any new
-integration code, 2,091 B above the stock V15 app allocation. Extending the app
+Doom engine cannot be declared to fit from those figures. The corrected probe's
+434,384 B app sections plus the selected 8×8 archive total 625,918 B before
+any new integration code, 23,806 B above the stock V15 app allocation. Its
+`.ram0_data` and `.ram0_bss` total 410,128 B before a Doom zone or task stack.
+Extending the app
 region would require a reviewed layout that preserves protected identity data
 and a rollback path.
 

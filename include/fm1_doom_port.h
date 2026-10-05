@@ -8,7 +8,7 @@
 #define FM1_DOOM_HEIGHT 240u
 #define FM1_DOOM_SOURCE_WIDTH 320u
 #define FM1_DOOM_SOURCE_HEIGHT 200u
-#define FM1_DOOM_STRIP_ROWS 4u
+#define FM1_DOOM_STRIP_ROWS 8u
 
 /* read_keys returns the 41 decoded stock scanner slots. write_rows consumes
    big-endian RGB565 bytes synchronously; it must not retain the strip. */

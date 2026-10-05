@@ -58,7 +58,13 @@ def keep_first_map(lumps: list[Lump], map_name: bytes, silent: bool,
         if no_attract_art and lump.name in (b"TITLEPIC", b"HELP1", b"HELP2", b"CREDIT"):
             i += 1
             continue
-        if silent and lump.name != b"D_E1M1" and (lump.name.startswith((b"D_", b"DS", b"DP"))
+        if silent and lump.name == b"D_E1M1":
+            # The engine still looks up the name before its disabled music
+            # backend is called. Keep a zero-length marker, not the song.
+            selected.append(Lump(lump.name, b""))
+            i += 1
+            continue
+        if silent and (lump.name.startswith((b"D_", b"DS", b"DP"))
                        or lump.name in (b"GENMIDI", b"DMXGUS")):
             i += 1
             continue

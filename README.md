@@ -34,7 +34,9 @@ video adapter emitted. It is a host rig; it does not send pixels to the device.
 
 Bring a lawful Doom shareware IWAD. The following creates a local staged WAD
 containing E1M1, needed graphics and sprites, and coarse 8×8 asset pixels.
-The stage tool does not include game data in this repository. These options
+The stage tool does not include game data in this repository. With `--silent`,
+the engine's still-referenced E1M1 music lump becomes a zero-length marker;
+this saves 17,283 bytes of raw data and about 17 KiB of host zone use. These options
 target direct E1M1 boot with sound disabled; other levels, menus, and completion
 screens are not yet validated.
 
@@ -58,9 +60,9 @@ On the tested shareware 1.8 input, asset pixelation gave these sizes:
 
 | Pixel blocks | Staged WAD | FMD1, 4 KiB cache | FMD1, 16 KiB cache |
 | ---: | ---: | ---: | ---: |
-| 4×4 | 846,762 B | 277,243 B | 241,695 B |
-| **8×8 (selected)** | **747,056 B** | **232,092 B** | **199,483 B** |
-| 16×16 | 697,100 B | 212,966 B | 182,138 B |
+| 4×4 | 829,479 B | 268,485 B | 234,158 B |
+| **8×8 (selected)** | **729,773 B** | **221,921 B** | **191,534 B** |
+| 16×16 | 679,817 B | 203,100 B | 174,114 B |
 
 The selected 8×8 direct compressed run rendered a recognizable start view at 768 KiB
 of host Doom zone. Its 4 KiB and 16 KiB archive variants produced the same
@@ -88,7 +90,7 @@ shims; it is never a firmware candidate.
 ## Port interfaces
 
 - `src/i_video_fm1.c` keeps the Doom renderer's indexed 320×200 framebuffer and
-  converts only four rows at a time. The caller consumes big-endian RGB565
+  converts eight rows at a time. The caller consumes big-endian RGB565
   pixels before each callback returns.
 - `src/fm1_doom_port.c` maps the stock scanner's measured slots to Doom keys and
   delivers all simultaneous press/release edges before polling again.
@@ -113,13 +115,16 @@ project. They still need gameplay acceptance on the physical key matrix.
 ## Why this is not ready to install
 
 The FM-1 has 1 MiB of internal flash and roughly 500 KiB of application RAM.
-The compressed E1M1 data itself can fit in that flash. An offline link probe
-measured 404,720 bytes of app sections without assets; combined with the selected
-199,483-byte E1M1 archive this is 604,203 bytes, 2,091 bytes above the stock
-602,112-byte app allocation. The probe retains NES and nonfunctional libc shims;
+The compressed E1M1 data itself can fit in that flash. A corrected offline link
+probe that retains the FM-1 input/video adapter measured 434,384 bytes of app
+sections without assets. With the selected 191,534-byte archive this totals
+625,918 bytes, 23,806 bytes above the stock 602,112-byte app allocation. The
+probe retains NES and nonfunctional libc shims;
 this arithmetic does not prove a real Doom firmware will fit.
 On the host, a full Freedoom WAD needed more than a 1 MiB zone. The reduced
 E1M1 passed 768 KiB but failed at 640 KiB. A lower-memory engine architecture
 and a verified flash layout are required before a standalone device build is
 credible. Audio, SDK task integration, image packaging, rollback, and bench
 acceptance remain open. See the exact gates in [PORT_STATUS.md](PORT_STATUS.md).
+The hardware goal is 30 completed LCD gameplay frames/s; see
+[PERFORMANCE_TARGET.md](PERFORMANCE_TARGET.md) for the measurement contract.

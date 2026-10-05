@@ -14,7 +14,7 @@ static void sleep_ms(void *u, uint32_t ms) { (void)u; (void)ms; }
 static int rows(void *u, unsigned y, unsigned count, const uint8_t *p)
 {
     (void)u;
-    if (count != 4u || y != calls * 4u) return -1;
+    if (count != FM1_DOOM_STRIP_ROWS || y != calls * FM1_DOOM_STRIP_ROWS) return -1;
     if (!calls) first = (uint16_t)((p[0] << 8u) | p[1]);
     if (y <= 120u && y + count > 120u) {
         unsigned offset = (120u - y) * FM1_DOOM_WIDTH * 2u + 120u * 2u;
@@ -44,7 +44,7 @@ int main(void)
     screen[199 * 320 + 319] = 3;
     fm1_doom_palette(&port, palette);
     CHECK(fm1_doom_present(&port, screen) == 0);
-    CHECK(calls == 60u && first == 0xf800u && center == 0x07e0u && last == 0x001fu);
+    CHECK(calls == FM1_DOOM_HEIGHT / FM1_DOOM_STRIP_ROWS && first == 0xf800u && center == 0x07e0u && last == 0x001fu);
     CHECK(!fm1_doom_next_key(&port, &pressed, &key));
     keys = (UINT64_C(1) << 14) | (UINT64_C(1) << 40);
     CHECK(fm1_doom_next_key(&port, &pressed, &key) && pressed && key == KEY_LEFTARROW);

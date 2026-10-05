@@ -13,6 +13,8 @@ static HMODULE zlib_module;
 static uint8_t *archive_image;
 static uint8_t *archive_cache;
 static fm1_fmd_t archive;
+static LARGE_INTEGER perf_frequency;
+static LONGLONG inflate_ticks;
 
 typedef int (__cdecl *uncompress_fn)(unsigned char *, unsigned long *,
                                       const unsigned char *, unsigned long);
@@ -21,10 +23,16 @@ static uncompress_fn host_uncompress;
 static int host_inflate(void *unused, const uint8_t *src, size_t src_len,
                         uint8_t *dst, size_t dst_len)
 {
+    LARGE_INTEGER start, end;
     unsigned long actual = (unsigned long)dst_len;
     (void)unused;
-    return host_uncompress(dst, &actual, src, (unsigned long)src_len) == 0
-        && actual == dst_len ? 0 : -1;
+    QueryPerformanceCounter(&start);
+    {
+        int result = host_uncompress(dst, &actual, src, (unsigned long)src_len);
+        QueryPerformanceCounter(&end);
+        inflate_ticks += end.QuadPart - start.QuadPart;
+        return result == 0 && actual == dst_len ? 0 : -1;
+    }
 }
 
 static int load_archive(FILE *file, const char *path)
@@ -43,6 +51,7 @@ static int load_archive(FILE *file, const char *path)
     archive_cache = malloc(block_size);
     zlib_module = LoadLibraryA("zlib1.dll");
     host_uncompress = zlib_module ? (uncompress_fn)GetProcAddress(zlib_module, "uncompress") : NULL;
+    QueryPerformanceFrequency(&perf_frequency);
     if (!archive_image || !archive_cache || !host_uncompress || fseek(file, 0, SEEK_SET) ||
         fread(archive_image, 1, (size_t)length, file) != (size_t)length ||
         fm1_fmd_open(&archive, archive_image, (size_t)length,
@@ -120,5 +129,19 @@ int main(int argc, char **argv)
     if (!strips || save_ppm(argv[3])) return 1;
     printf("Rendered %u LCD strips over %ld engine ticks to %s\n", strips, ticks, argv[3]);
     printf("Purgeable/free Doom zone bytes after run: %d\n", Z_FreeMemory());
+    if (archive_image) {
+        printf("FMD1 decode: %u blocks, %llu compressed bytes, %.3f ms host inflate time\n",
+               archive.block_decodes, (unsigned long long)archive.compressed_bytes_decoded,
+               perf_frequency.QuadPart ? 1000.0 * (double)inflate_ticks / (double)perf_frequency.QuadPart : 0.0);
+    }
+    {
+        const char *dump_path = getenv("FM1_DOOM_HEAP_DUMP");
+        if (dump_path && *dump_path) {
+            FILE *dump = fopen(dump_path, "wb");
+            if (!dump) return 1;
+            Z_FileDumpHeap(dump);
+            if (fclose(dump)) return 1;
+        }
+    }
     return 0;
 }

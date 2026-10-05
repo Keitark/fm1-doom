@@ -65,6 +65,8 @@ int fm1_fmd_open(fm1_fmd_t *fmd, const uint8_t *image, size_t image_len,
     fmd->wad_size = wad_size;
     fmd->block_count = count;
     fmd->cached_block = FMD_NO_BLOCK;
+    fmd->block_decodes = 0;
+    fmd->compressed_bytes_decoded = 0;
     fmd->inflate = inflate;
     fmd->context = context;
     return 0;
@@ -99,6 +101,8 @@ size_t fm1_fmd_read(fm1_fmd_t *fmd, uint32_t offset, void *destination,
                 return 0;
             }
             fmd->cached_block = block;
+            ++fmd->block_decodes;
+            fmd->compressed_bytes_decoded += size;
         }
         take = raw_len - within;
         if (take > length - copied) {
