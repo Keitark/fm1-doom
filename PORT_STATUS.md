@@ -25,9 +25,16 @@
 | Experimental 160×100 size probe | Links; 433,296 B app sections before WAD, 343,088 B static RAM | Same probe limitations; selected archive makes 624,830 B before integration |
 | Direct-E1M1 Doom-only size probe | Links without NES app; 363,888 B app sections before WAD; fixed 296 KiB zone and 4 KiB cache included in 477,656 B static RAM; 45,900 B linked heap span | Empty `app_main`, nonfunctional libc shims; not bootable Doom |
 | Current menu Doom-only size probe | Links without NES app; 361,072 B app sections before WAD; 470,728 B static RAM; 52,812 B linked heap span; 478,662 B app plus FMD1 | Inert app and unsupported libc; size baseline only |
-| UBOOT `app.bin` input | Links SDK task, XIP FMD1, stock LCD and SPI2 scanner: 482,448 B app, 475,224 B static RAM, 48,332 B linked heap span | Plain `-app` input ready; no device run, sound, or runtime heap proof |
+| Revised UBOOT `app.bin` input | Links Doom/USB tasks, XIP FMD1, shared LCD DMA strip and paced SPI2 scanner: 504,592 B app, 474,264 B static RAM, 49,292 B linked heap; reviewed startup reserve 4,672 B | Offline budget passes; physical runtime heap/stack still unmeasured |
+| Startup and video audit | Correct SDK stack units; static bounded inflater; zone-backed lumpinfo; remove 48,000 B wipe peak; save 6,768 B drawing RAM; 64× fewer gameplay palette samples | Complete pixel reference comparison passes; this is not a whole-frame speedup claim |
+| Audited host/decoder tests | Normal CTest 5/5, lowres x86 CTest 4/4, Python 21/21; 114 archive blocks decoded; 296 KiB x86 moving/menu/restart/exit pass | SDK headers with desktop zlib for decoder execution; target SDK compile/link pass |
 | Current eight-row host output | 4,860 callbacks over 120 ticks; exact image hash match with four-row output | No hardware timing or FPS result |
-| FM-1 boot, LCD, keys, audio | Physical test not attempted | No installable update package |
+| First FM-1 Doom flash | 121 sectors written; complete 1 MiB readback and decoded application/CRC match | User reported blank LCD after reset and cold boot; display/input acceptance failed |
+| Doom CDC startup diagnosis | Second flash verifies 124 sectors/full readback; reset and CDC boot work, zero LCD error; fatal config name lacks its `%i` index | Generated printf normalization fixes the confirmed SDK incompatibility; serial UBOOT recovery passes |
+| Corrected physical Doom boot | Six changed sectors/full readback match, reset succeeds, stage 4 and frames 133→167 with zero faults; user confirms visible gameplay | Controls still being checked; approximately 11 counter increments/s in short capture, not 30 FPS acceptance |
+| Scanner freeze and graphics correction | 569,840 B app; 474,488 B static RAM; 49,068 B linker heap and 4,448 B reviewed reserve; 140 changed sectors/full readback match; reset/CDC succeeds | Whole-map memory/stack and 30 FPS remain open |
+| Revised graphics and memory tests | Original pistol/punch, 4×4 world/enemies, Smooth/Detailed toggle; host600 firing/moving ticks and Detailed120 pass at296 KiB; CTest5/5 and4/4, Python30/30, all145 archive blocks decode | Host tests plus target compile/link; audio disabled |
+| Sustained physical input after fix | User confirms stable movement/firing and both views; 60-second Detailed-mode capture frames629→1292 with zero engine/LCD/key errors, retry0 and advancing scanner/IRQ counters | Approximate11.05 counter increments/s; not distinct-frame30 FPS acceptance |
 
 The first smoke used Freedoom 0.13.0 `freedoom1.wad` from the project's official
 [release](https://github.com/freedoom/freedoom/releases/tag/v0.13.0), stored
@@ -61,11 +68,13 @@ level data in flash. Its [memory notes](https://kilograham.github.io/rp2040-doom
 describe why a straight Chocolate Doom build does not fit. The current
 direct-E1M1 menu FMD1 archive is 117,590 B with a 4 KiB cache. The current
 candidate embeds it into read-only XIP flash and verifies the exact bytes in
-the extracted app image. The candidate's app is 482,448 B, below the stock V15
-602,112 B allocation. Its fixed 296 KiB zone and 4 KiB cache are included in
-475,224 B static RAM; the linker heap span is 48,332 B. This does not prove
-runtime fit: the 8 KiB task stack, SDK heap, decoder scratch, and physical
-flash behavior have not been measured. See [TARGET_CANDIDATE.md](TARGET_CANDIDATE.md).
+the extracted app image. The candidate's app is 504,592 B, below the reviewed
+584,956 B slot. Its fixed 296 KiB zone and 4 KiB cache are included in
+474,264 B static RAM, along with a 7 KiB bounded inflater arena; the linker
+heap span is 49,292 B. The reviewed task/queue/idle budget is 42,584 B, plus
+800 B initialization allowance and 1,236 B USB allocations. Physical heap/stack use and flash behavior
+still need measurement. See [TARGET_CANDIDATE.md](TARGET_CANDIDATE.md) and
+[AUDIT.md](AUDIT.md).
 
 ## Required before calling this playable on FM-1
 

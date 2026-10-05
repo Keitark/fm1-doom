@@ -31,6 +31,7 @@ def main() -> int:
         parser.error("SDK checkout is dirty")
     make = board.MAKE.read_text(encoding="utf-8")
     flags = board.make_list(make, "CFLAGS")
+    flags += ["-DFM1_TARGET_PI32V2=1"]
     includes = ["-I" + str(ROOT / "include"), "-I" + str(doom), "-I" + str(sdk / "apps/common")]
     includes.extend("-I" + str(board.sdk_path(i[2:])) for i in board.make_list(make, "INCLUDES"))
     names = re.findall(r'<ClCompile Include="([^\"]+\.c)"', (doom / "doomgeneric.vcxproj").read_text())

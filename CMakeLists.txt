@@ -32,6 +32,19 @@ add_test(NAME archive_contract COMMAND archive_tests)
 add_executable(target_io_tests tests/target_io_tests.c src/fm1_doom_target_io.c)
 target_include_directories(target_io_tests PRIVATE include)
 add_test(NAME target_lcd_contract COMMAND target_io_tests)
+add_executable(usb_protocol_tests tests/usb_protocol_tests.c src/fm1_doom_usb_protocol.c)
+target_include_directories(usb_protocol_tests PRIVATE include)
+add_test(NAME target_usb_contract COMMAND usb_protocol_tests)
+
+# Optional validation of the target allocation binding using the SDK headers
+# and a real Windows zlib DLL. The SDK library itself runs only on PI32V2.
+if(WIN32 AND FM1_ZLIBLITE_INCLUDE_DIR)
+  add_executable(zliblite_tests tests/zliblite_tests.c
+    src/fm1_fmd_zliblite.c src/fm1_doom_archive.c)
+  target_include_directories(zliblite_tests PRIVATE include "${FM1_ZLIBLITE_INCLUDE_DIR}")
+  target_compile_definitions(zliblite_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
+  add_test(NAME target_inflater_contract COMMAND zliblite_tests)
+endif()
 
 if(WIN32)
   file(STRINGS "${DOOM_SRC}/doomgeneric.vcxproj" ENGINE_LINES REGEX "ClCompile Include=\".*\\.c\"")

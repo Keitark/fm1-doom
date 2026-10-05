@@ -21,6 +21,12 @@ generated copy also uses 16 local command backup tics and a 64-visplane limit;
 the engine reports an error if that plane limit is reached. The upstream
 submodule and all game data remain unmodified and uncommitted, respectively.
 
+The startup audit sizes drawing lookups to the fixed screen, moves the lump
+directory into the Doom zone, and disables transition wipes (48,000 B peak).
+The optimized converter preserves every output pixel while sampling each
+8×8 gameplay block once. A bounded 7 KiB inflater arena avoids SDK heap
+allocation. See [AUDIT.md](AUDIT.md) for tests and the current memory budget.
+
 ## Reproduce on Windows
 
 ```powershell

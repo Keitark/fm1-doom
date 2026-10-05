@@ -30,7 +30,8 @@ int fm1_doom_lcd_rows(fm1_doom_lcd_write_fn write,
     if (!write || !pixels || !rows || rows > 8u || y > 240u - rows
         || y % 8u || rows != 8u) return -1;
     if (y == 0 && command(write, 0x2a, columns, sizeof(columns))) return -1;
-    first = y + 40u;
+    /* The qualified NES stock sequence displays RAM rows 0..239. */
+    first = y;
     last = first + rows - 1u;
     bounds[0] = (uint8_t)(first >> 8); bounds[1] = (uint8_t)first;
     bounds[2] = (uint8_t)(last >> 8); bounds[3] = (uint8_t)last;

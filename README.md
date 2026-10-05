@@ -6,25 +6,38 @@ submodule at `dcb7a8dbc7a16ce3dda29382ac9aae9d77d21284`. Game assets are
 separate: bring a lawful IWAD such as the Doom shareware WAD or Freedoom. No
 WAD, stock firmware dump, device key, or flashable image is distributed here.
 
-**Status: UBOOT `app.bin` input built, unflashed; hardware behavior unverified.** The engine
-renders through a 320×200 indexed buffer into FM-1-sized 240×240 RGB565 strips,
+**Status: Doom is flashed and gameplay is visible on the FM-1.** The engine
+renders through a 160×100 indexed buffer into FM-1-sized 240×240 RGB565 strips,
 and the stock 41-slot key scanner is mapped to Doom key edges. A Windows host
 runner produced real gameplay frames with Freedoom Phase 1 and with an aggressively
 reduced Doom shareware E1M1 archive. A real SDK Doom task, XIP-embedded
 compressed archive, LCD strip output, and SPI2 key scanner now link for pi32v2.
-They have not run on the physical device; audio and 30 FPS acceptance remain open.
+The corrected startup uses the working NES paced key scanner, row-zero LCD
+placement and USB fault reporting/recovery. The SDK's missing `%i` formatter
+support was the confirmed engine startup fault. Serial frame counters advance
+with zero engine/LCD/key errors, and the user confirms visible gameplay.
+Movement, menu and firing worked after a power cycle, but input subsequently
+stalled with scanner error `-3` while frames kept advancing. The revised build
+uses a hardware-interpolated scanner clock and continuing recovery with backoff.
+The user now confirms stable controls and both presentation modes; a 60-second
+Detailed-mode capture has zero faults and about 11 counter increments/s.
+Audio and the 30 FPS target remain open.
 The private `build/target-candidate/app.bin` is the verified plain input for a
 WL82 UBOOT flow accepting SDK `-app app.bin`; see [target candidate](TARGET_CANDIDATE.md)
 for its exact format and limits.
+See [deployment evidence](DEPLOYMENT.md) for the verified image and hardware result.
 See [PORT_STATUS.md](PORT_STATUS.md) and [issue #1](https://github.com/Keitark/fm1-doom/issues/1).
 
-An experimental 160×100 direct-E1M1 build renders gameplay as exact 8×8 LCD
-blocks and scales the original Doom menu images to fit the screen. The menu
-offers New Game and graphic detail, with no custom menu text. Its archive is
-117,590 B with a 4 KiB decode cache; a 32-bit host exercised the menu at a
-296 KiB Doom zone. The offline candidate including the SDK task and board
-bindings fits the stock app allocation and nominal SRAM, while runtime stack,
-heap, decoder scratch, and physical behavior remain unverified. See the
+The current 160×100 direct-E1M1 build has two presentation modes: Smooth uses
+exact 8×8 LCD blocks; Detailed uses all 160×93 gameplay samples. Both fill the
+240×240 display, and the original image menu and compact HUD stay detailed.
+Press D♯4 (the fifth black key from the left) to toggle while playing.
+The archive uses original pistol/punch art and 4×4 world/enemy assets:
+181,995 B with a 4 KiB decode cache. Both modes pass 32-bit host gameplay
+checks at a 296 KiB Doom zone. Whole-texture caches now use a bounded column
+buffer, preventing the reproduced fragmented-zone allocation failure. Runtime
+stack/heap and whole-level hardware acceptance remain open. See the
+[audit](AUDIT.md),
 [target candidate](TARGET_CANDIDATE.md) and [low-memory profile](LOW_MEMORY_EXPERIMENT.md).
 
 ## Build and test on Windows
@@ -74,7 +87,7 @@ On the tested shareware 1.8 input, asset pixelation gave these sizes:
 | Pixel blocks | Staged WAD | FMD1, 4 KiB cache | FMD1, 16 KiB cache |
 | ---: | ---: | ---: | ---: |
 | 4×4 | 829,479 B | 268,485 B | 234,158 B |
-| **8×8 (selected)** | **729,773 B** | **221,921 B** | **191,534 B** |
+| 8×8 (initial profile) | 729,773 B | 221,921 B | 191,534 B |
 | 16×16 | 679,817 B | 203,100 B | 174,114 B |
 
 The selected 8×8 direct compressed run rendered a recognizable start view at 768 KiB
@@ -85,10 +98,16 @@ For a host-only memory check, set `FM1_DOOM_ZONE_KIB` before running the host
 binary. The reduced E1M1 booted at 768 KiB; 640 KiB failed a 64,040-byte
 allocation. This test does not account for SDK, stack, or screen RAM.
 
-For the current direct E1M1 first stage, use `--no-ui --menu-ui` and the
-generated 160×100 engine. This retains original menu images while removing
-intermission, status, and text HUD graphics. The resulting WAD is 465,581 B
-and its 4 KiB block FMD1 archive is 117,590 B on the tested shareware input.
+For the current direct E1M1 first stage, use the generated 160×100 engine:
+
+```powershell
+python tools/stage_wad.py C:\path\to\doom1.wad build\stage-menu-ui.wad --map E1M1 --silent --prune-graphics --prune-sprites --no-attract-art --no-ui --menu-ui --pixelate 4 --weapon-pixelate 1
+python tools/pack_archive.py build\stage-menu-ui.wad build\menu-ui-4k.fmd --block-size 4096
+```
+
+This retains original menu images and pistol/punch art while removing
+intermission and status-bar art. The resulting WAD is 590,103 B and its
+4 KiB block FMD1 archive is 181,995 B on the tested shareware input.
 `LOW_MEMORY_EXPERIMENT.md` has the exact build and run commands.
 
 With the clean pinned SDK and toolchain from the existing
@@ -121,26 +140,30 @@ deliberately nonfunctional file-operation shims and are never firmware candidate
 - `src/w_file_fm1.c` connects that reader to the original engine's WAD file
   interface. `src/fm1_fmd_zliblite.c` calls the SDK's zliblite decoder.
 
-| Stock slot | Doom action |
-| ---: | --- |
-| 14, 17, 16, 18 | Left, forward, backward, right |
-| 40, 38 | Fire, use |
-| 15, 20 | Run, strafe modifier |
-| 19, 22 | Menu/back, enter; fire also selects in the menu |
-| 21, 23 | Weapons 1, 2 |
+| Physical note | Stock slot | Doom action |
+| --- | ---: | --- |
+| F3 / G♯3 / G3 / A3 | 14 / 17 / 16 / 18 | Left / forward / backward / right |
+| G5 / F5 (far-right white keys) | 40 / 38 | Fire / use |
+| F♯3 / B3 | 15 / 20 | Run / strafe modifier |
+| A♯3 / C♯4 | 19 / 22 | Menu/back / enter; fire also selects in the menu |
+| C4 / D4 | 21 / 23 | Weapons 1 / 2 |
+| D♯4 (fifth black key from left) | 24 | Toggle Smooth / Detailed |
 
 The slot assignments use the recovered FM-1 scanner table from the board
-project. They still need gameplay acceptance on the physical key matrix.
+project. These are fixed physical-note names; MIDI octave/transposition settings
+do not change the Doom controls. Movement/fire and both views are confirmed
+working after the scanner fix; whole-level input acceptance remains open.
 
 ## Limits of the UBOOT input
 
 The reviewed V14/v32 app slot is 584,956 B. The offline E1M1 candidate,
-including its compressed archive, is 482,448 B. It includes a fixed 296 KiB
-Doom zone and 4 KiB archive cache. Static RAM is 475,224 B, leaving a 48,332 B
-linked heap span before the task stack and runtime allocations. A full Freedoom
-WAD still needs far more memory. The UBOOT `app.bin` input is ready, while sound,
-runtime memory verification, physical key/display behavior, and bench acceptance
-remain open.
+including its compressed archive, is 569,840 B. It includes a fixed 296 KiB
+Doom zone, 4 KiB archive cache and 7 KiB bounded inflater arena. Static RAM is
+474,488 B, leaving a 49,068 B linked heap span. Reviewed startup uses 42,584 B
+for tasks/queues/idle, an 800 B initialization allowance and 1,236 B USB requests,
+leaving 4,448 B before other allocations/padding. A full Freedoom WAD still
+needs far more memory. Sound, runtime memory verification, sustained physical
+input and the requested 30 FPS remain open.
 See the exact gates in [PORT_STATUS.md](PORT_STATUS.md).
 The hardware goal is 30 completed LCD gameplay frames/s; see
 [PERFORMANCE_TARGET.md](PERFORMANCE_TARGET.md) for the measurement contract.

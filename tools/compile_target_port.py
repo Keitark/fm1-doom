@@ -27,6 +27,7 @@ def main() -> int:
         parser.error("FM-1 SDK checkout is dirty")
     make_text = board.MAKE.read_text(encoding="utf-8")
     flags = board.make_list(make_text, "CFLAGS")
+    flags += ["-DFM1_TARGET_PI32V2=1"]
     if args.lowres:
         flags += ["-DFM1_DOOM_SOURCE_WIDTH=160", "-DFM1_DOOM_SOURCE_HEIGHT=100"]
     engine = ROOT / ("build/lowres-source" if args.lowres else "vendor/doomgeneric/doomgeneric")

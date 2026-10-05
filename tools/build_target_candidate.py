@@ -20,6 +20,92 @@ UBOOT_APP_SLOT_LIMIT = 584_956  # reviewed V14/v32 application slot
 RAM0_LIMIT = 523_596  # pinned linker RAM0 window
 
 
+def task_heap_budget(source: str, usb_dynamic_heap_bytes: int = 0) -> dict:
+    table = re.search(r"const struct task_info task_info_table\[\]\s*=\s*\{(.*?)\n\};", source, re.S)
+    if not table:
+        raise ValueError("target task table is missing")
+    body = re.sub(r"/\*.*?\*/|//[^\n]*", "", table.group(1), flags=re.S)
+    entry = re.compile(r'\{\s*"([^\"]+)"\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\}\s*,?')
+    values = entry.findall(body)
+    remaining = entry.sub("", body)
+    if not re.fullmatch(r"\s*\{\s*0\s*,\s*0\s*,\s*0\s*,\s*0\s*,\s*0\s*\}\s*,?\s*", remaining):
+        raise ValueError("target task budget requires literal stack and queue sizes")
+    names = [name for name, _, _, _ in values]
+    reviewed = ["app_core", "sys_event", "systimer", "sys_timer", "fm1_doom"]
+    reviewed_usb = reviewed[:4] + ["doom_usb"] + reviewed[4:]
+    if names not in (reviewed, reviewed_usb):
+        raise ValueError("target task table differs from the reviewed Doom/CDC budget")
+    if usb_dynamic_heap_bytes and names != reviewed_usb:
+        raise ValueError("CDC heap budget requires the USB task entry")
+    tasks = [{"name": name, "priority": int(priority),
+              "stack_words": int(stack), "stack_bytes": int(stack) * 4,
+              "queue_size_bytes": int(queue),
+              "queue_allocation_bytes": int(queue) + 92 if int(queue) else 0,
+              "task_control_block_bytes": 164}
+             for name, priority, stack, queue in values]
+    if any(task["stack_words"] == 0 for task in tasks):
+        raise ValueError("target task has no stack allocation")
+    minimum = sum(task["stack_bytes"] + task["queue_allocation_bytes"] + 164
+                  for task in tasks) + 2 * (256 * 4 + 164)
+    return {"stack_word_bytes": 4, "queue_size_unit_bytes": 1, "tasks": tasks,
+            "idle_task_count": 2, "idle_stack_words_each": 256,
+            "idle_task_control_block_bytes_each": 164,
+            "minimum_task_heap_bytes": minimum,
+            "reviewed_init_allowance_bytes": 800,
+            "usb_dynamic_heap_bytes": usb_dynamic_heap_bytes,
+            "required_runtime_reserve_bytes": 4096,
+            "required_linker_heap_bytes": minimum + 800 + usb_dynamic_heap_bytes + 4096,
+            "assumptions": "Pinned SDK task stacks use 32-bit words; allocated queues use qsize bytes plus 92; task control blocks use 164 bytes. USB allocations are measured from the compiled CDC/configuration code; endpoint DMA and inflater workspace are static, and lumpinfo is in the Doom zone."}
+
+
+def usb_heap_allocations(cdc_ir: str, configuration_ir: str) -> dict:
+    def allocations(text: str, function: str) -> list[int]:
+        body = re.search(r"^define\b[^\n]*@" + re.escape(function) +
+                         r"\([^\n]*\).*?^\}", text, re.M | re.S)
+        if not body:
+            raise ValueError(f"USB allocation measurement function is missing: {function}")
+        return [int(size) for size in re.findall(
+            r"\bcall\b[^\n]*@(?:zalloc|malloc)\(i32 (\d+)\)", body.group(0))]
+    cdc = allocations(cdc_ir, "cdc_register")
+    configuration = allocations(configuration_ir, "usb_config")
+    if cdc != [200, 64] or configuration != [972]:
+        raise ValueError(f"USB allocation sizes differ from the reviewed SDK: CDC {cdc}, config {configuration}")
+    return {"cdc_gadget_bytes": cdc[0], "cdc_receive_buffer_bytes": cdc[1],
+            "usb_configuration_bytes": configuration[0],
+            "total_requested_bytes": sum(cdc + configuration),
+            "mutex_storage": "os_mutex_create uses embedded static queue storage",
+            "endpoint_dma_storage": "four static 256-byte buffers",
+            "allocator_padding": "covered by the required 4096-byte runtime reserve"}
+
+
+def source_dependencies(source: Path, include_dirs: list[Path]) -> set[Path]:
+    dependencies = set()
+    pending = [source.resolve()]
+    while pending:
+        path = pending.pop()
+        if path in dependencies:
+            continue
+        dependencies.add(path)
+        for name in re.findall(r'^\s*#\s*include\s*["<]([^">]+)[">]',
+                               path.read_text(encoding="utf-8", errors="replace"), re.M):
+            for directory in [path.parent, *include_dirs]:
+                header = directory / name
+                if header.is_file():
+                    pending.append(header.resolve())
+                    break
+    return dependencies
+
+
+def check_object_freshness(obj: Path, source: Path, include_dirs: list[Path],
+                           configuration: list[Path]) -> set[Path]:
+    if not source.is_file():
+        raise ValueError(f"target object source is missing: {obj.name}")
+    dependencies = source_dependencies(source, include_dirs) | set(configuration)
+    if any(obj.stat().st_mtime_ns < path.stat().st_mtime_ns for path in dependencies):
+        raise ValueError(f"target object is stale after a source, header or compile configuration change: {obj.name}")
+    return dependencies
+
+
 def run(command: list[str], *, cwd: Path | None = None) -> str:
     result = subprocess.run(command, cwd=cwd, capture_output=True, text=True)
     if result.returncode:
@@ -39,9 +125,17 @@ def main() -> int:
     parser.add_argument("archive", type=Path, help="local 4 KiB-block FMD1 menu archive")
     parser.add_argument("--fm1-root", type=Path, required=True)
     args = parser.parse_args()
+    out = ROOT / "build/target-candidate"
+    out.mkdir(parents=True, exist_ok=True)
+    manifest = out / "build-manifest.json"
+    manifest.write_text(json.dumps({"status": "build_in_progress_or_failed",
+                                    "flashable": False}) + "\n", encoding="utf-8")
     fm1 = args.fm1_root.resolve()
     sys.path.insert(0, str(fm1 / "firmware/nes"))
+    usb = fm1 / "firmware/usb-diag"
+    sys.path.insert(0, str(usb))
     import build_boot as board
+    import vendor_overlay
 
     sdk = board.SDK.resolve()
     if sdk != (fm1 / "references/source/fw-AC79_AIoT_SDK").resolve():
@@ -51,8 +145,8 @@ def main() -> int:
     if run(["git", "-C", str(sdk), "status", "--porcelain"]).strip():
         parser.error("FM-1 SDK checkout is dirty")
     source = args.archive.read_bytes()
-    if len(source) > 131_072 or source[4:8] != (4096).to_bytes(4, "little"):
-        parser.error("archive must use 4 KiB FMD1 blocks and fit the 128 KiB app-data cap")
+    if len(source) > 196_608 or source[4:8] != (4096).to_bytes(4, "little"):
+        parser.error("archive must use 4 KiB FMD1 blocks and fit the 192 KiB app-data cap")
     if not unpack(source).startswith(b"IWAD"):
         parser.error("FMD1 payload is not an IWAD")
 
@@ -77,20 +171,23 @@ def main() -> int:
     generated = ROOT / "build/lowres-source"
     if (generated / "d_main.c").stat().st_mtime_ns < (ROOT / "tools/make_lowres_engine.py").stat().st_mtime_ns:
         parser.error("regenerate the low-resolution engine after changing its generator")
+    make = board.MAKE.read_text(encoding="utf-8")
+    dependency_includes = [ROOT / "include", generated, sdk / "apps/common"]
+    dependency_includes += [board.sdk_path(item[2:])
+                            for item in board.make_list(make, "INCLUDES")]
+    common_configuration = [ROOT / "CMakeLists.txt", ROOT / "tools/make_lowres_engine.py",
+                            generated / "doomgeneric.vcxproj", board.MAKE]
+    source_closure = set(common_configuration + [ROOT / "tools/build_target_candidate.py",
+                         ROOT / "tools/compile_target_engine.py", ROOT / "tools/compile_target_port.py",
+                         usb / "vendor_overlay.py"])
     for obj in engine_objects:
         source_path = generated / obj.name.removesuffix(".o")
-        if not source_path.is_file() or obj.stat().st_mtime_ns < source_path.stat().st_mtime_ns:
-            parser.error(f"target engine object is stale: {obj.name}")
+        source_closure.update(check_object_freshness(obj, source_path, dependency_includes,
+                              common_configuration + [ROOT / "tools/compile_target_engine.py"]))
     for obj in port_objects:
         source_path = ROOT / "src" / (obj.stem + ".c")
-        if not source_path.is_file() or obj.stat().st_mtime_ns < source_path.stat().st_mtime_ns:
-            parser.error(f"target port object is stale: {obj.name}")
-
-    out = ROOT / "build/target-candidate"
-    out.mkdir(parents=True, exist_ok=True)
-    manifest = out / "build-manifest.json"
-    manifest.write_text(json.dumps({"status": "build_in_progress_or_failed",
-                                    "flashable": False}) + "\n", encoding="utf-8")
+        source_closure.update(check_object_freshness(obj, source_path, dependency_includes,
+                              common_configuration + [ROOT / "tools/compile_target_port.py"]))
     blob = out / "embedded_archive.c"
     with blob.open("w", encoding="ascii", newline="\n") as file:
         file.write("#include <stdint.h>\n"
@@ -100,19 +197,21 @@ def main() -> int:
         file.write("};\nconst uint32_t fm1_doom_embedded_archive_len = "
                    + str(len(source)) + ";\n")
 
-    make = board.MAKE.read_text(encoding="utf-8")
     flags = board.make_list(make, "CFLAGS")
     defines = board.make_list(make, "DEFINES")
     defines += ["-DFM1_DOOM_SOURCE_WIDTH=160", "-DFM1_DOOM_SOURCE_HEIGHT=100",
                 "-DFM1_NES_PLAYER=1", "-DFM1_TARGET_PI32V2=1",
+                "-DFM1_USB_CONTROLLER=0", "-DFM1_KEYSCAN_DMA2=1",
+                "-DFM1_KEYSCAN_IRQ=1", "-DFM1_KEYSCAN_PACED=1",
                 "-DFM1_LCD_STOCK_FILL=1", "-DFM1_LCD_STOCK_DMA=1",
                 "-DFM1_LCD_STOCK_SEQUENCE=1"]
-    includes = ["-I" + str(path) for path in
-                (ROOT / "include", ROOT / "build/lowres-source",
-                 fm1 / "firmware/nes/boot", fm1 / "firmware/nes/include",
-                 sdk / "apps/common")]
-    includes += ["-I" + str(board.sdk_path(item[2:]))
-                 for item in board.make_list(make, "INCLUDES")]
+    candidate_includes = [ROOT / "include", ROOT / "build/lowres-source", usb,
+                          fm1 / "firmware/nes/boot", fm1 / "firmware/nes/include",
+                          sdk / "apps/common", sdk / "apps/common/usb",
+                          sdk / "apps/common/usb/device"]
+    candidate_includes += [board.sdk_path(item[2:])
+                           for item in board.make_list(make, "INCLUDES")]
+    includes = ["-I" + str(path) for path in candidate_includes]
     sources = [fm1 / "firmware/nes/boot/board.c",
                ROOT / "src/fm1_doom_target.c",
                ROOT / "src/fm1_doom_target_io.c",
@@ -120,12 +219,56 @@ def main() -> int:
                fm1 / "firmware/nes/boot/display_test.c",
                fm1 / "firmware/nes/src/fm1_wl82_keyscan.c",
                fm1 / "firmware/nes/src/fm1_stock_keys.c", blob]
+    sources += [ROOT / "src/fm1_doom_usb.c", ROOT / "src/fm1_doom_usb_protocol.c"]
+    sources += [usb / name for name in ("descriptors.c", "usb_policy.c", "dma.c",
+                                       "rx_channel.c", "boot_entry.c")]
+    sources.append(sdk / "apps/common/usb/usb_config.c")
+    overlays = {}
+    for name, transform in (("cdc.c", vendor_overlay.cdc),
+                            ("usb_device.c", vendor_overlay.device),
+                            ("msd_upgrade.c", vendor_overlay.boot_entry)):
+        original = sdk / "apps/common/usb/device" / name
+        target = out / ("fm1-" + name)
+        target.write_text(transform(original.read_text(encoding="utf-8")), encoding="utf-8")
+        sources.append(target)
+        source_closure.add(original)
+        overlays[str(original)] = hashlib.sha256(original.read_bytes()).hexdigest()
+    for path, name in ((sdk / "cpu/wl82/sdk_ld.c", "sdk.ld"),
+                       (sdk / "cpu/wl82/sdk_used_list.c", "sdk.used")):
+        source_closure.update(source_dependencies(path, candidate_includes))
+        run([str(board.TC / "clang.exe"), *flags, *defines, *includes,
+             "-D__LD__", "-E", "-P", str(path), "-o", str(out / name)])
+    used = out / "sdk.used"
+    retained = ["memory_init", "app_main", "fm1_doom_usb_task", "cdc_read_data",
+                "cdc_write_data", "fm1_cdc_ready", "fm1_usb_device_descriptor",
+                "fm1_usb_config_descriptor", "fm1_usb_rx_irq", "go_mask_usb_updata",
+                "nvram_set_boot_state", "fm1_wl82_keyscan_async_raw", "jiffies_half_msec"]
+    used.write_text(used.read_text() + "\n" + "\n".join(retained) + "\n")
+    ld = (out / "sdk.ld").read_text()
+    for old, new in (("*(.data)", "*(.data .data.*)"), ("*(.bss)", "*(.bss .bss.*)")):
+        ld = vendor_overlay.once(ld, old, new)
+    for section in (".syscfg.2.ops", ".syscfg.1.ops"):
+        ld = vendor_overlay.once(ld, "*(" + section + ")", "/* no persistent cfg repair */")
+    ld += "\nSECTIONS { /DISCARD/ : { *(.syscfg.2.ops) *(.syscfg.1.ops) } }\n"
+    (out / "sdk.ld").write_text(ld)
+    source_closure.update((out / "sdk.ld", used))
     extras = []
+    usb_ir = {}
     for index, path in enumerate(sources):
+        source_closure.update(source_dependencies(path, candidate_includes))
         obj = out / f"extra-{index}.o"
         run([str(board.TC / "clang.exe"), *flags, *defines, *includes,
              "-c", str(path), "-o", str(obj)])
         extras.append(obj)
+        if path.name in ("fm1-cdc.c", "usb_config.c"):
+            ir = out / (path.stem + "-allocations.ll")
+            run([str(board.TC / "clang.exe"), "-x", "ir", "-target", "pi32v2",
+                 "-S", "-emit-llvm", str(obj), "-o", str(ir)])
+            usb_ir[path.name] = ir.read_text()
+    usb_allocations = usb_heap_allocations(usb_ir["fm1-cdc.c"], usb_ir["usb_config.c"])
+    task_budget = task_heap_budget((ROOT / "src/fm1_doom_target.c").read_text(encoding="utf-8"),
+                                   usb_allocations["total_requested_bytes"])
+    task_budget["usb_allocations"] = usb_allocations
 
     libs = [sdk / "include_lib/newlib/pi32v2-lib" / name
             for name in ("libm.a", "libc.a", "libcompiler_rt.a")]
@@ -136,13 +279,13 @@ def main() -> int:
     link = [str(board.TC / "pi32v2-lto-wrapper.exe"), "-o", str(elf),
             *map(str, board_objects + engine_objects + port_objects + extras),
             "--start-group", *map(str, libs), "--end-group",
-            "-T" + str(base / "sdk.ld"), "-M=" + str(out / "fm1-doom-candidate.map"),
+            "-T" + str(out / "sdk.ld"), "-M=" + str(out / "fm1-doom-candidate.map"),
             "--wrap=boot_info_init", "--wrap=memory_init",
             "--undefined=memory_init", "--undefined=app_main",
             "--undefined=fm1_doom_embedded_archive",
             "--plugin-opt=mcpu=r3", "--plugin-opt=-mattr=+fprev1",
             "--plugin-opt=-pi32v2-large-program=true",
-            "--plugin-opt=-used-symbol-file=" + str(base / "sdk.used")]
+            "--plugin-opt=-used-symbol-file=" + str(used)]
     run(link, cwd=out)
     elf_bytes = elf.read_bytes()
     if elf_bytes[:7] != b"\x7fELF\x01\x01\x01" or len(elf_bytes) < 52:
@@ -157,6 +300,9 @@ def main() -> int:
         if sections.get(name, (0, 0))[0]:
             raise ValueError(f"unsupported external RAM section is nonempty: {name}")
     nm = run([str(board.TC / "llvm-nm.exe"), "-n", str(elf)])
+    for name in retained:
+        if not re.search(r"^[0-9a-fA-F]+\s+[A-Za-z]\s+" + re.escape(name) + r"$", nm, re.M):
+            raise ValueError(f"required Doom/CDC link symbol is missing: {name}")
     image_symbol = re.search(r"^([0-9a-fA-F]+)\s+[A-Za-z]\s+fm1_doom_embedded_archive$", nm, re.M)
     if not image_symbol or ".text" not in sections:
         raise ValueError("embedded archive symbol or flash section is missing")
@@ -180,8 +326,11 @@ def main() -> int:
     ram = sum(sections.get(name, (0, 0))[0]
               for name in (".ram0_data", ".ram0_bss"))
     heap_bytes = heap["_HEAP_END"] - heap["_HEAP_BEGIN"]
-    if application.stat().st_size > min(APP_LIMIT, UBOOT_APP_SLOT_LIMIT) or ram > RAM0_LIMIT or heap_bytes < 32_768:
-        raise ValueError("candidate exceeds flash/RAM or leaves under 32 KiB linker heap")
+    if application.stat().st_size > min(APP_LIMIT, UBOOT_APP_SLOT_LIMIT) or ram > RAM0_LIMIT:
+        raise ValueError("candidate exceeds flash or static RAM")
+    if heap_bytes < task_budget["required_linker_heap_bytes"]:
+        raise ValueError(f"candidate linker heap {heap_bytes} is below the reviewed startup requirement {task_budget['required_linker_heap_bytes']}")
+    task_budget["runtime_reserve_after_reviewed_startup_bytes"] = heap_bytes - task_budget["minimum_task_heap_bytes"] - task_budget["reviewed_init_allowance_bytes"] - task_budget["usb_dynamic_heap_bytes"]
     uboot_app = out / "app.bin"
     uboot_app.write_bytes(application.read_bytes())
     if uboot_app.read_bytes() != b"".join(parts):
@@ -193,16 +342,23 @@ def main() -> int:
         "archive_bytes": len(source), "archive_flash_vma": image_vma,
         "application_bytes": application.stat().st_size,
         "application_sha256": hashlib.sha256(application.read_bytes()).hexdigest(),
+        "elf_sha256": hashlib.sha256(elf_bytes).hexdigest(),
         "uboot_app_file": str(uboot_app),
         "uboot_app_input_ready": True,
         "uboot_app_format": "plain WL82 SDK app.bin for isd_download -app; not an encoded raw-flash image",
         "uboot_xip_entry": hex(elf_entry),
         "reviewed_app_slot_limit_bytes": UBOOT_APP_SLOT_LIMIT,
         "source_sha256": {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
-                          for path in sources},
+                          for path in sorted(source_closure)},
         "ram0_data_bytes": sections.get(".ram0_data", (0, 0))[0],
         "ram0_bss_bytes": sections.get(".ram0_bss", (0, 0))[0],
         "linked_heap_bytes_before_runtime": heap_bytes,
+        "startup_heap_budget": task_budget,
+        "usb_controller": 0,
+        "usb_recovery": "CDC status, cooperative stop and guarded IRQ-context UBOOT entry",
+        "keyscan_mode": "DMA2 IRQ with 1 ms pacing",
+        "keyscan_clock": "SDK hardware-interpolated half-millisecond clock",
+        "vendor_overlay_sources": overlays,
         "missing_acceptance": ["physical boot", "runtime heap/stack", "LCD/key behavior",
                                "audio", "30 FPS timing", "physical rollback and write validation"],
         "device_operations_performed": False,

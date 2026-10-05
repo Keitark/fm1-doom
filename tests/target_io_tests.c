@@ -42,15 +42,15 @@ int main(void)
     CHECK(transactions[1].data == 1 && transactions[1].length == 4
           && transactions[1].first[3] == 239);
     CHECK(transactions[2].data == 0 && transactions[2].first[0] == 0x2b);
-    CHECK(transactions[3].data == 1 && transactions[3].first[1] == 40
-          && transactions[3].first[3] == 47);
+    CHECK(transactions[3].data == 1 && transactions[3].first[1] == 0
+          && transactions[3].first[3] == 7);
     CHECK(transactions[4].data == 0 && transactions[4].first[0] == 0x2c);
     CHECK(transactions[5].data == 1 && transactions[5].length == sizeof(pixels)
           && transactions[5].first[0] == 0x12 && transactions[5].first[1] == 0x34);
     count = 0;
     CHECK(fm1_doom_lcd_rows(capture, 232, 8, pixels) == 0 && count == 4);
-    CHECK(transactions[1].first[0] == 1 && transactions[1].first[1] == 16
-          && transactions[1].first[2] == 1 && transactions[1].first[3] == 23);
+    CHECK(transactions[1].first[0] == 0 && transactions[1].first[1] == 232
+          && transactions[1].first[2] == 0 && transactions[1].first[3] == 239);
     count = 0;
     CHECK(fm1_doom_lcd_rows(capture, 233, 8, pixels) == -1 && count == 0);
     CHECK(fm1_doom_lcd_rows(capture, 232, 9, pixels) == -1 && count == 0);

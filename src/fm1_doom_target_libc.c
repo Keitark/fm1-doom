@@ -1,22 +1,14 @@
-/* Console diagnostics and explicit unsupported filesystem operations for the
- * FM-1 E1M1 profile. No save/load or shell command is exposed by this build. */
+/* The pinned SDK has no console transport. Engine fatal errors use the RAM
+ * diagnostic hook; discard other console output without formatting it. */
 #include <errno.h>
-#include <stdarg.h>
 #include <stdio.h>
 #include <sys/stat.h>
 
 int fprintf(FILE *stream, const char *format, ...)
 {
-    char line[256];
-    int count;
-    va_list args;
     (void)stream;
-    va_start(args, format);
-    count = vsnprintf(line, sizeof(line), format, args);
-    va_end(args);
-    if (count < 0) return count;
-    printf("%s", line);
-    return count;
+    (void)format;
+    return 0;
 }
 
 int fflush(FILE *stream) { (void)stream; return 0; }

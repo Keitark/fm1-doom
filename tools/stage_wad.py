@@ -13,6 +13,7 @@ import zlib
 MAP = re.compile(rb"E[1-4]M[1-9]$|MAP[0-9][0-9]$")
 MAP_LUMPS = (b"THINGS", b"LINEDEFS", b"SIDEDEFS", b"VERTEXES", b"SEGS",
              b"SSECTORS", b"NODES", b"SECTORS", b"REJECT", b"BLOCKMAP")
+WEAPON_VIEW_PREFIXES = {b"PISG", b"PISF", b"PUNG"}
 
 
 @dataclass(frozen=True)
@@ -174,11 +175,11 @@ def pixelate_flat(data: bytes, factor: int) -> bytes:
 
 
 def prune_graphics(lumps: list[Lump], map_name: bytes, sprites: bool,
-                   pixelate: int) -> list[Lump]:
+                   pixelate: int, weapon_pixelate: int | None = None) -> list[Lump]:
     """Keep the selected map's walls/flats plus episode-one switches/sky.
 
-    Sprites and non-level UI graphics remain intact. This conservative pass
-    never changes pixel or patch data; it removes unreachable wall/flat lumps.
+    Non-level UI graphics remain intact. Optional pixelation preserves logical
+    dimensions; weapon_pixelate overrides only retained pistol/fist view art.
     """
     by_name = {lump.name: lump for lump in lumps}
     index = next(i for i, lump in enumerate(lumps) if lump.name == map_name)
@@ -261,8 +262,12 @@ def prune_graphics(lumps: list[Lump], map_name: bytes, sprites: bool,
             continue
         if sprites and namespace == b"S" and lump.data and lump.name[:4].upper() not in needed_sprites:
             continue
-        if pixelate > 1 and lump.data and namespace in (b"S", b"P"):
-            lump = Lump(lump.name, pixelate_patch(lump.data, pixelate))
+        lump_pixelate = pixelate
+        if (namespace == b"S" and weapon_pixelate is not None
+                and lump.name[:4].upper() in WEAPON_VIEW_PREFIXES):
+            lump_pixelate = weapon_pixelate
+        if lump_pixelate > 1 and lump.data and namespace in (b"S", b"P"):
+            lump = Lump(lump.name, pixelate_patch(lump.data, lump_pixelate))
         elif pixelate > 1 and lump.data and namespace == b"F":
             lump = Lump(lump.name, pixelate_flat(lump.data, pixelate))
         output.append(lump)
@@ -305,6 +310,8 @@ def main() -> None:
                         help="With --no-ui, retain original M_ menu patches for the half-size menu")
     parser.add_argument("--pixelate", type=int, choices=(1, 2, 4, 8, 16), default=1,
                         help="Coarsen patch/sprite/flat pixels while keeping logical dimensions")
+    parser.add_argument("--weapon-pixelate", type=int, choices=(1, 2, 4, 8, 16),
+                        help="Override pistol/fist view patch pixelation; defaults to --pixelate")
     args = parser.parse_args()
     map_name = args.map.upper().encode("ascii")
     if not MAP.fullmatch(map_name):
@@ -315,8 +322,11 @@ def main() -> None:
     stage = keep_first_map(source, map_name, args.silent, args.no_attract_art)
     if args.prune_sprites and not args.prune_graphics:
         parser.error("--prune-sprites requires --prune-graphics")
+    if args.weapon_pixelate is not None and not args.prune_graphics:
+        parser.error("--weapon-pixelate requires --prune-graphics")
     if args.prune_graphics:
-        stage = prune_graphics(stage, map_name, args.prune_sprites, args.pixelate)
+        stage = prune_graphics(stage, map_name, args.prune_sprites, args.pixelate,
+                               args.weapon_pixelate)
     if args.no_ui:
         if map_name != b"E1M1" or not args.no_attract_art:
             parser.error("--no-ui requires --map E1M1 and --no-attract-art")
