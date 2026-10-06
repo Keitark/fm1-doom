@@ -27,37 +27,28 @@ and effects. A 105-second Detailed-mode capture has zero reported errors,
 successful music looping and about 10.9 counter increments/s. Instrument
 quality and mix balance are being checked; the 30 FPS target remains open.
 See [audio](AUDIO.md).
-Revision `3318678` adds the PB6 master volume knob, lossless original
-PCM effects, DOS OPL2 music and an E4 switch for the requested VCO/VCF/VCA
-melody treatment. Effects and synth-mode drums are 6 dB quieter. Its local
-app was flashed and readback-verified, but the user reports no audio and USB
-requests fail after a cold boot. LTO merged reply buffers into a 3,192-byte USB
-task frame; its status call chain exceeds the allocated 4 KiB stack.
-Revision `58b9ac4` repaired the stack overflow and was flashed with complete
-readback verification. USB observation reached stage 4 with zero engine/LCD/key
-errors, and a device frame capture succeeded. Audio diagnostics showed an IIS
-initialization failure (`ready=0`, `error=-1`, `irqs=0`, `volume_valid=0`).
-The installed `03492fc` revision returns 1 KiB of USB stack headroom to the
-runtime heap and adds an explicit `heap_free` diagnostic. Its 555,024 B app
-retains 477,912 B static RAM, a 45,644 B linker heap and 5,120 B of reviewed
-startup reserve. The emitted diagnostic chain is 1,436 B; with a 1,024 B SDK
-margin, it leaves 612 B within the 3 KiB USB stack. Its full flash readback
-matches. HELLO timed out after one reset; the user subsequently confirms audible
-music, but the volume knob has no effect and USB appears unresponsive. Windows
-currently sees no FM-1 serial port; reconnection and fresh diagnostics are pending.
-The next candidate binds Doom/USB tasks to CPU0 and makes CPU1 the single audio
-interrupt owner. It polls the PB6 knob from the CPU0 key timer and sends only a
-gain target to the audio callback. These changes pass host contracts; installation
-and physical knob/USB acceptance remain pending. The cause of the USB loss has
-not been confirmed on the device.
-The latest candidate also fixes the invisible first door: graphics pruning had
-moved `BIGDOOR2` to texture index zero, which the renderer treats as no texture.
-The corrected archive retains the original texture-zero entry and its patch.
-Closed doors are opaque in both host presentation modes, and F5 opens the first
-door. This fix is not installed on the FM-1 yet.
-The new app is 555,248 B with 477,896 B static RAM. Its 1,460 B diagnostic
-chain plus 1,024 B SDK margin leaves 588 B in the 3 KiB USB stack. All 74 Python
-tests and 424 frozen source/config/header hashes pass the candidate checks.
+The installed `8a36a90` revision binds Doom/USB to CPU0 and audio to CPU1,
+and fixes the invisible first door by retaining original texture index zero.
+Its complete flash readback and serial boot observation passed. Live game
+snapshots show exploration beyond the door and one kill; full-level acceptance
+is still open. See [current bench evidence](PORT_STATUS.md).
+
+The physical PB6 knob is still faulty: a confirmed sweep gave ADC260..261
+while samples continued. OPL mode is active, but audio callbacks exceeded
+their 1.45 ms budget. The next source candidate skips unused synth processing,
+retains exact original OPL output, adds ADC/GPIO register diagnostics and
+capture-only USB Audio Class1 at44.1kHz/stereo16bit. It preserves CDC serial
+and guarded UBOOT recovery. The first UAC image enumerated a recording endpoint
+but failed IIS initialization; no USB recording is verified yet. The replacement
+restores memory headroom and boots with ADC-controlled speaker gain. USB
+recording taps the mix before master gain.
+
+`DOOM MUTE 1` keeps analog output quiet; `DOOM MUTE 0` releases that override.
+`DOOM AUDIO` reports `speaker_muted`, raw knob target and actual gain.
+`DOOM VOLUME` returns bounded read-only ADC/GPIO/analog register snapshots.
+`DOOM USB_AUDIO` reports capture fill, submissions, underruns and drops.
+E4 switches between original OPL and the optional analog synth treatment.
+The new USB capture and timing changes require deployment and bench checks.
 USB position/frame diagnostics can inspect the device display with
 `python tools/capture_usb_frame.py --port COM10` once USB responds after boot.
 The private `build/target-candidate/app.bin` is the verified plain input for a
@@ -208,6 +199,7 @@ deliberately nonfunctional file-operation shims and are never firmware candidate
 | A♯3 / C♯4 | 19 / 22 | Menu/back / enter; fire also selects in the menu |
 | C4 / D4 | 21 / 23 | Weapons 1 / 2 |
 | D♯4 (fifth black key from left) | 24 | Toggle Smooth / Detailed |
+| E4 | 25 | Toggle OPL / analog synth music |
 
 The slot assignments use the recovered FM-1 scanner table from the board
 project. These are fixed physical-note names; MIDI octave/transposition settings
@@ -217,10 +209,10 @@ working after the scanner fix; whole-level input acceptance remains open.
 ## Limits of the UBOOT input
 
 The reviewed V14/v32 app slot is 584,956 B. The current E1M1 audio candidate,
-including its compressed archive and audio banks, is 555,248 B, leaving 29,708 B.
+including its compressed archive and audio banks, is 557,968 B, leaving 26,988 B.
 It includes a fixed 296 KiB Doom zone, 4 KiB archive cache and 7 KiB bounded
-inflater arena. Static RAM is 477,896 B, leaving a 45,644 B linked heap span.
-Reviewed startup uses 37,464 B for tasks/queues/idle, an 800 B initialization
+inflater arena. Static RAM is 478,408 B, leaving a 45,132 B linked heap span.
+Reviewed startup uses 36,952 B for tasks/queues/idle, an 800 B initialization
 allowance, 1,236 B USB requests and 1,024 B IIS DMA, leaving 5,120 B before
 other allocations/padding. `heap_free` queries aggregate allocator space;
 it does not measure the largest free block or minimum-ever free heap.

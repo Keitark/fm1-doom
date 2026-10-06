@@ -33,13 +33,15 @@ class EmittedStackTests(unittest.TestCase):
     def report():
         sizes = {"fm1_doom_usb_task": 136, "command.2434": 16,
                  "fm1_doom_usb_protocol_status": 956, "fm1_doom_usb_protocol_trace": 932,
-                 "fm1_doom_usb_protocol_audio": 1100, "game_status": 720,
+                 "fm1_doom_usb_protocol_audio": 1100, "fm1_doom_usb_protocol_volume": 640, "game_status": 720,
                  "frame_info.2447": 204, "frame_read.2449": 424,
+                 "fm1_doom_usb_protocol_usb_audio": 480, "fm1_usb_audio_target_status": 128,
                  "snprintf": 12, "vsnprintf": 136, "decimal": 24, "repeat": 16, "string": 20}
         frames = {name: {"frame_bytes": size, "direct_calls": [], "indirect_calls": []}
                   for name, size in sizes.items()}
         frames["fm1_doom_usb_task"]["direct_calls"] = ["command.2434", "fm1_doom_usb_protocol_status"]
-        frames["command.2434"]["direct_calls"] = list(sizes)[2:8]
+        frames["command.2434"]["direct_calls"] = list(sizes)[2:10]
+        frames["fm1_doom_usb_protocol_usb_audio"]["direct_calls"] = ["fm1_usb_audio_target_status"]
         frames["snprintf"]["direct_calls"] = ["vsnprintf"]
         frames["vsnprintf"]["direct_calls"] = ["decimal", "repeat", "string"]
         return {"functions": frames}
@@ -54,9 +56,27 @@ class EmittedStackTests(unittest.TestCase):
         report["functions"]["fm1_doom_usb_task"]["frame_bytes"] = 3192
         with self.assertRaisesRegex(ValueError, "exceeds"):
             usb_diagnostic_budget(report, 4096)
+
+    def test_usb_audio_nested_formatter_counts_toward_peak(self):
+        report = self.report()
+        report["functions"]["fm1_usb_audio_target_status"]["frame_bytes"] = 800
+        self.assertEqual(usb_diagnostic_budget(report, 4096)["diagnostic_chain_bytes"], 1604)
+        del report["functions"]["fm1_usb_audio_target_status"]
+        with self.assertRaisesRegex(ValueError, "audio formatter"):
+            usb_diagnostic_budget(report, 4096)
         del report["functions"]["fm1_doom_usb_protocol_audio"]
         with self.assertRaisesRegex(ValueError, "boundary"):
             usb_diagnostic_budget(report, 4096)
+
+    def test_volume_reply_is_covered_by_the_stack_gate(self):
+        report = self.report()
+        del report["functions"]["fm1_doom_usb_protocol_volume"]
+        with self.assertRaisesRegex(ValueError, "boundary"):
+            usb_diagnostic_budget(report, 3072)
+        report = self.report()
+        report["functions"]["fm1_doom_usb_protocol_volume"]["frame_bytes"] = 1800
+        with self.assertRaisesRegex(ValueError, "exceeds"):
+            usb_diagnostic_budget(report, 3072)
 
     def test_unreviewed_callback_and_nested_formatting_fail_closed(self):
         for name, field, value in (("game_status", "indirect_calls", ["call r0"]),

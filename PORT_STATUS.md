@@ -1,6 +1,71 @@
 # Port status and acceptance gates
 
-## Evidence from this branch
+## Latest bench evidence (2026-10-06)
+
+The door/CPU1-audio revision `8a36a90` was installed successfully: 136 changed
+sectors, directory last, one complete 1 MiB readback SHA-256
+`c93507faf483732c93caa3f6f569ffc6a155d7528d7ae566f84ac7511fd1fb83`.
+One reset and serial observation succeeded on COM10: stage4, advancing frames,
+zero engine/LCD/key errors, sys360MHz and lsb60MHz. Later GAME snapshots showed
+exploration beyond the first door and one kill. Full-level physical acceptance
+and 30 displayed FPS remain open.
+
+This closes installation of the previously pending CPU0/CPU1 split and the
+asset correction. The confirmed door defect was pruning original TEXTURE1
+index0 AASTINKY: BIGDOOR2 then became index0, which the engine treats as no
+texture. The fix preserves entry0 and its patch closure; map geometry and
+existing patch pixels stay unchanged. Host before/after captures and navigation
+verify that specific correction.
+
+The user still reports strange OPL audio and an unresponsive knob. OPL mode
+was confirmed active (`synth_mode=0`). Reported maximum audio IRQ duration4500us
+exceeds the64-frame/44100Hz budget of about1451us; observed callback rate was
+roughly350..400/s against about689/s. The diagnostic is quantized in500us
+steps and excludes lock wait, so it does not certify every deadline.
+
+A confirmed20-second physical knob sweep recorded raw260..261, samples
+58267→61719, valid1/errors0 and target=gain32. Sampling runs, but no knob change
+reaches the accepted input. Live heap_free4244 is aggregate allocator space.
+The verified working NES driver reads ADC_CON0x13100/ADC_RES0x13104, PB6/ch4.
+Both ports initialize volume before IIS; the44100Hz IIS path does not overwrite
+the ADC analog gates. No pin change or guessed initialization reorder is justified.
+
+The next source candidate adds bounded `DOOM VOLUME` hardware snapshots and
+capture-only USB Audio Class1 (stereoPCM16/44100Hz, interfaces2/3, EP0x81).
+It boots in original OPL mode, skips inaudible synth/drum work and uses an exact
+faster noise LFSR. The96-second independent reference still matches37784
+register writes and4233600 PCM samples;65536 rhythm-toggle samples also match.
+The physical timing and knob cause require new device measurements.
+
+USB packet commits are bounded and epoch-checked; busy/rejected packets keep
+their pending samples, and the linked gate rejects SDK polling packet writers.
+Host checks cover clock drift, backpressure, lifecycle, IRQ restoration and
+actual ADC/audio output. The first UAC build was installed with complete
+readback SHA-256 `c510e024e83fbbc90932c14d769fc61b5c8e2b6cc3ca2c99250609a4772eba8b`.
+After UBOOT reset, COM4 and a Windows recording endpoint enumerated, but IIS
+reported ready0/error-1/irqs0. Its failure cleanup stopped ADC sampling and
+the capture producer; USB audio has not yet produced a recording. After the
+user's reset, Doom remained visible but Windows saw neither serial nor audio.
+
+The linked allocator is the SDK's dlmalloc: chunks round to32B, IIS's1024B
+request needs1056B, and heap growth requires4096B. Aggregate heap_free4276
+does not prove either requirement can be met. Allocation failure fits the
+regression but is not yet distinguished from the driver's other -1 paths.
+
+The replacement candidate restores1024B total headroom: USB stack3072→2560B
+and CDC transmit ring1024→512B. A single protocol reply is capped511B.
+Normal startup now follows the ADC; `DOOM MUTE 1/0` is an optional override.
+Its application is557968B, SHA-256
+`71cea5cef5aa3f8beeb175e99a0d618a6291438d37422ea340daed79f7fc9d52`;
+ELF SHA-256 `a1b33db102c73283e3787281bc7f2b3a9e755a048371f51ea54874efea6b6bf7`.
+Static RAM478408B leaves45132B linker heap and5120B reviewed startup reserve
+before padding/other allocations. The1472B diagnostic chain plus1024B SDK
+margin leaves64B of its2560B stack. The linked capture descriptor and
+256B/64-aligned endpoint DMA pass validation; polling packet writers are
+absent. Python79/79 and all12 native contracts pass, including focused
+CDC cancellation/queue tests. Replacement installation is pending.
+
+## Earlier bring-up evidence
 
 The OPL/synth/knob revision `3318678` was installed and readback-verified, but
 the user reports silence and USB requests fail after cold boot. An emitted

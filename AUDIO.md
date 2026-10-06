@@ -5,19 +5,27 @@ The OPL/synth/knob revision `3318678` introduced silence and a confirmed USB
 task stack overflow. The flashed, readback-verified `58b9ac4` repair restored
 USB and running stage 4. Its audio diagnostics reported `ready=0`, `error=-1`,
 `irqs=0` and `volume_valid=0`: IIS initialization failed before audio callbacks.
-The installed `03492fc` revision returns 1 KiB of USB task stack to the runtime
-heap and exposes remaining heap space for diagnosis. Its full flash readback
-matches. HELLO timed out after one reset; the user subsequently confirms music
-is audible, but the knob has no effect and USB appears unresponsive. Windows
-currently sees no FM-1 port; fresh diagnostics await reconnection.
+The installed `8a36a90` revision has working serial telemetry, CPU1 audio and
+the corrected first door. A confirmed knob sweep still gives raw260..261 while
+sampling continues. OPL mode is active; measured callbacks exceed the1.45ms
+budget. See [current bench evidence](PORT_STATUS.md).
 
-The next candidate changes CPU/interrupt ownership and moves knob sampling out
-of the audio callback. It is not installed; knob response and USB recovery are
-not yet established on hardware. CPU starvation has not been proved as the
-cause of the observed USB loss.
-The linked app is 555,120 B with 477,896 B static RAM, a 45,644 B linker heap
-and 5,120 B reviewed startup reserve. Its USB diagnostic chain plus SDK margin
-leaves 588 B in the 3,072 B allocation. See [target artifacts](TARGET_CANDIDATE.md).
+The next candidate removes unused synth/drum work in settled OPL mode and
+accelerates noise while preserving the exact original PCM. It adds read-only
+`DOOM VOLUME` register snapshots and capture-only UAC1 at44100Hz/stereoPCM16.
+Capture taps the music/effects mix before the physical master gain. Startup
+follows the ADC; `DOOM MUTE 1/0` controls an optional override, and
+`DOOM AUDIO` reports its state.
+
+USB capture handles busy/rejected submissions with persistent staging and an
+epoch check; CDC submits using the queued reply's generation. Neither endpoint
+uses the SDK polling packet writer. The first flashed UAC image enumerated
+serial and recording endpoints after UBOOT reset, but IIS failed with-1 and
+produced no samples. After the user's reset, Doom remained visible and USB
+disappeared. The replacement557968B app restores1024B headroom, with478408B
+static RAM,45132B linker heap and5120B reviewed startup reserve. Its emitted
+diagnostic closure plus SDK margin fits the2560B USB stack. Target gates pass;
+new callback timing, physical ADC and USB streaming need bench validation.
 
 ## Output and volume
 
@@ -53,7 +61,7 @@ snapshots can straddle callbacks and do not prove a coherent moment in time.
 - The optional synth mode applies VCO oscillator colour, VCA envelopes and
   resonant VCF filtering to the melody. It keeps original OPL percussion with
   reduced drum gain. E4 switches synth/OPL mode once per press. The requested
-  synth treatment is enabled by default; DOS mode remains available.
+  original DOS mode is the boot default; synth treatment remains switchable.
 - Two streamed effect voices decode original PCM8 samples losslessly from
   Rice blocks. Pistol, pickup, `oof`, menu open and menu close occupy 12,613 B.
   `noway` and `oof` share identical original samples. Linked chaingun effects

@@ -155,7 +155,7 @@ USB_NOINLINE void fm1_doom_usb_protocol_audio(const fm1_doom_usb_protocol_io *io
     io->get_status(io->context, &status);
     if (io->get_heap_free) status.heap_free = io->get_heap_free(io->context);
     snprintf(output, sizeof(output),
-             "DOOM AUDIO ready=%d error=%d irqs=%lu frames=%lu sfx_started=%lu sfx_voices=%lu music_playing=%lu music_ticks=%lu music_events=%lu music_loops=%lu music_steals=%lu music_errors=%lu music_voices=%lu usb_stack_words=%lu max_irq_us=%lu volume_raw=%lu volume_gain=%lu volume_valid=%lu volume_errors=%lu volume_samples=%lu volume_target=%lu synth_mode=%lu heap_free=%d\n",
+             "DOOM AUDIO ready=%d error=%d irqs=%lu frames=%lu sfx_started=%lu sfx_voices=%lu music_playing=%lu music_ticks=%lu music_events=%lu music_loops=%lu music_steals=%lu music_errors=%lu music_voices=%lu usb_stack_words=%lu max_irq_us=%lu volume_raw=%lu volume_gain=%lu volume_valid=%lu volume_errors=%lu volume_samples=%lu volume_target=%lu synth_mode=%lu speaker_muted=%lu heap_free=%d\n",
              status.audio_ready, status.audio_error,
              (unsigned long)status.audio_irqs, (unsigned long)status.audio_frames,
              (unsigned long)status.sfx_started, (unsigned long)status.sfx_voices,
@@ -167,7 +167,41 @@ USB_NOINLINE void fm1_doom_usb_protocol_audio(const fm1_doom_usb_protocol_io *io
              (unsigned long)status.volume_raw, (unsigned long)status.volume_gain,
              (unsigned long)status.volume_valid, (unsigned long)status.volume_errors,
              (unsigned long)status.volume_samples, (unsigned long)status.volume_target,
-             (unsigned long)status.synth_mode, status.heap_free);
+             (unsigned long)status.synth_mode,
+             (unsigned long)status.speaker_muted, status.heap_free);
+    io->reply(io->context, output);
+}
+
+USB_NOINLINE void fm1_doom_usb_protocol_volume(const fm1_doom_usb_protocol_io *io)
+{
+    struct fm1_doom_usb_volume volume;
+    char output[512];
+    const fm1_doom_volume_hardware *hardware = &volume.hardware;
+    if (!io->get_volume) { io->reply(io->context, "ERR VOLUME_UNAVAILABLE\n"); return; }
+    memset(&volume, 0, sizeof(volume));
+    io->get_volume(io->context, &volume);
+    snprintf(output, sizeof(output),
+             "DOOM VOLUME ms=%lu adc_con=%08lx adc_res=%lu pb_dir=%08lx pb_die=%08lx pb_pu=%08lx pb_pd=%08lx pb_hd0=%08lx pb_hd1=%08lx pb_dieh=%08lx wla_con0=%08lx pll_con1=%08lx raw=%lu accepted=%lu target=%lu gain=%lu run=%lu valid=%lu waiting=%lu samples=%lu errors=%lu sys_hz=%d lsb_hz=%d\n",
+             (unsigned long)volume.now_ms,
+             (unsigned long)hardware->adc_con, (unsigned long)hardware->adc_res,
+             (unsigned long)hardware->pb_dir, (unsigned long)hardware->pb_die,
+             (unsigned long)hardware->pb_pu, (unsigned long)hardware->pb_pd,
+             (unsigned long)hardware->pb_hd0, (unsigned long)hardware->pb_hd1,
+             (unsigned long)hardware->pb_dieh, (unsigned long)hardware->wla_con0,
+             (unsigned long)hardware->pll_con1,
+             (unsigned long)hardware->raw, (unsigned long)hardware->accepted,
+             (unsigned long)hardware->target, (unsigned long)hardware->gain,
+             (unsigned long)hardware->running, (unsigned long)hardware->valid,
+             (unsigned long)hardware->waiting, (unsigned long)hardware->samples,
+             (unsigned long)hardware->errors, volume.sys_hz, volume.lsb_hz);
+    io->reply(io->context, output);
+}
+
+void USB_NOINLINE fm1_doom_usb_protocol_usb_audio(const fm1_doom_usb_protocol_io *io)
+{
+    char output[448];
+    if (!io->format_usb_audio) { io->reply(io->context, "ERR USB_AUDIO_UNAVAILABLE\n"); return; }
+    io->format_usb_audio(output, sizeof(output));
     io->reply(io->context, output);
 }
 
@@ -183,6 +217,18 @@ static USB_NOINLINE void command(fm1_doom_usb_protocol *protocol, int isolated, 
         fm1_doom_usb_protocol_trace(io);
     } else if (!strcmp(protocol->line, "DOOM AUDIO")) {
         fm1_doom_usb_protocol_audio(io);
+    } else if (!strcmp(protocol->line, "DOOM USB_AUDIO")) {
+        fm1_doom_usb_protocol_usb_audio(io);
+    } else if (!strcmp(protocol->line, "DOOM MUTE 1") ||
+               !strcmp(protocol->line, "DOOM MUTE 0")) {
+        unsigned muted = protocol->line[10] == '1';
+        if (io->set_speaker_muted) {
+            io->set_speaker_muted(io->context, muted);
+            io->reply(io->context, muted ? "OK DOOM MUTE 1\n" : "OK DOOM MUTE 0\n");
+        } else io->reply(io->context, "ERR MUTE_UNAVAILABLE\n");
+    } else if (!strcmp(protocol->line, "DOOM VOLUME") ||
+               !strcmp(protocol->line, "VOLUME")) {
+        fm1_doom_usb_protocol_volume(io);
     } else if (!strcmp(protocol->line, "DOOM GAME")) {
         game_status(io);
     } else if (!strcmp(protocol->line, "DOOM FRAME BEGIN")) {

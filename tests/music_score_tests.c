@@ -98,7 +98,7 @@ static void synth_tests(void)
 int main(void)
 {
     unsigned i,nonzero=0,peak=0;int32_t sample;uint64_t power=0;fm1_doom_music_diagnostics d;
-    CHECK(fm1_doom_music_get_synth_mode()==1);
+    CHECK(fm1_doom_music_get_synth_mode()==0);
 #ifdef FM1_TARGET_PI32V2
     module_tests();
 #endif

@@ -25,7 +25,7 @@ static struct {
     struct {int32_t low,band;} filters[3];
     uint16_t blend;
 } synth;
-static uint8_t synth_mode=1;
+static uint8_t synth_mode;
 /* C0..B0 phase increments at44.1kHz. Octaves are exact powers of two. */
 static const uint32_t synth_notes[12]={796254u,843601u,893765u,946911u,1003217u,1062871u,
     1126073u,1193033u,1263974u,1339134u,1418763u,1503127u};
@@ -243,6 +243,16 @@ void fm1_doom_music_sample_stereo(int16_t *left,int16_t *right)
     if(!music.sample_count){tick();music.sample_count=TICK_FRAMES;}
     --music.sample_count;
     if(!music.playing)return;
+    /* Settled DOS mode needs only the original mono OPL sample. Keep its
+     * clock and MUS events running exactly as before, while the inaudible
+     * optional VCO/VCF and percussion stem do no per-sample work. MIDI
+     * events still update synth voices; their oscillators/envelopes resume
+     * when the user switches back, through the existing short crossfade. */
+    if(!synth_mode && !synth.blend){
+        sample=(int)fm1_doom_opl_sample()*4;
+        *left=*right=music.master?clip(sample):0;
+        return;
+    }
     /* DOS OPL2 is mono. Original DMX music-volume and GENMIDI operator-level
      * rules run inside the driver. A fixed gain leaves room for
      * the independent PCM gunshot mixer; no instrument is rebalanced. */

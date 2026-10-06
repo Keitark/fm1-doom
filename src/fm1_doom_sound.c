@@ -11,6 +11,10 @@
 #endif
 #include "fm1_doom_sound.h"
 #include "fm1_doom_music.h"
+#ifndef FM1_DOOM_SOUND_TEST
+#include "fm1_usb_audio.h"
+#include "fm1_usb_audio_target.h"
+#endif
 #include "fm1_board.h"
 #include "fm1_volume.h"
 #include <string.h>
@@ -236,6 +240,7 @@ static fm1_doom_sound_voice voices[FM1_DOOM_SOUND_VOICES];
 static fm1_audio_startup envelope;
 static fm1_volume master_volume;
 static volatile uint32_t volume_target_q7;
+#define SPEAKER_MUTED_BIT 0x80000000u
 static struct iis_platform_data audio_pd; /* SDK retains this pointer. */
 static spinlock_t audio_lock, volume_lock;
 /* Keep the OPL renderer off CPU0's CDC, scanner and timer interrupt path. */
@@ -271,12 +276,68 @@ static void volume_release(unsigned flags)
     local_irq_restore(flags);
 }
 
+#ifdef FM1_DOOM_SOUND_TEST
+#define volume_hardware_read fm1_sound_test_hardware_read
+#else
+static uint32_t volume_hardware_read(uint32_t address)
+{
+    return *(volatile uint32_t *)(uintptr_t)address;
+}
+#endif
+
+#if defined(_MSC_VER)
+__declspec(noinline)
+#else
+__attribute__((noinline))
+#endif
+void fm1_doom_sound_get_volume_hardware(fm1_doom_volume_hardware *hardware)
+{
+    unsigned flags;
+    if (!hardware) return;
+    flags = volume_take();
+    hardware->adc_con = volume_hardware_read(0x13100u);
+    hardware->adc_res = volume_hardware_read(0x13104u);
+    hardware->pb_dir = volume_hardware_read(0x50048u);
+    hardware->pb_die = volume_hardware_read(0x5004cu);
+    hardware->pb_pu = volume_hardware_read(0x50050u);
+    hardware->pb_pd = volume_hardware_read(0x50054u);
+    hardware->pb_hd0 = volume_hardware_read(0x50058u);
+    hardware->pb_hd1 = volume_hardware_read(0x5005cu);
+    hardware->pb_dieh = volume_hardware_read(0x50060u);
+    hardware->wla_con0 = volume_hardware_read(0x11900u);
+    hardware->pll_con1 = volume_hardware_read(0x119a4u);
+    hardware->raw = master_volume.raw;
+    hardware->accepted = master_volume.accepted;
+    hardware->target = volume_target_q7 & 127u;
+    hardware->gain = *(const volatile uint8_t *)&envelope.gain_q7;
+    hardware->running = master_volume.running;
+    hardware->valid = master_volume.valid;
+    hardware->waiting = master_volume.waiting;
+    hardware->samples = master_volume.samples;
+    hardware->errors = master_volume.errors;
+    volume_release(flags);
+}
+
 void fm1_doom_sound_volume_tick(void)
 {
     unsigned flags = volume_take();
     fm1_volume_tick(&master_volume);
-    volume_target_q7 = master_volume.valid ? master_volume.target : 0;
+    volume_target_q7 = (volume_target_q7 & SPEAKER_MUTED_BIT) |
+        (master_volume.valid ? master_volume.target : 0);
     volume_release(flags);
+}
+
+void fm1_doom_sound_set_speaker_muted(unsigned muted)
+{
+    unsigned flags = volume_take();
+    volume_target_q7 = (volume_target_q7 & ~SPEAKER_MUTED_BIT) |
+        (muted ? SPEAKER_MUTED_BIT : 0);
+    volume_release(flags);
+}
+
+unsigned fm1_doom_sound_speaker_is_muted(void)
+{
+    return (volume_target_q7 & SPEAKER_MUTED_BIT) != 0;
 }
 
 unsigned fm1_doom_sound_lock(void) { return take(); }
@@ -315,6 +376,7 @@ void fm1_doom_sound_get_diagnostics(fm1_doom_sound_diagnostics *diagnostics)
     diagnostics->volume_errors = volume->errors;
     diagnostics->volume_samples = volume->samples;
     diagnostics->volume_target = (uint8_t)volume_target_q7;
+    diagnostics->speaker_muted = (uint8_t)fm1_doom_sound_speaker_is_muted();
     diagnostics->synth_mode = fm1_doom_music_get_synth_mode();
     diagnostics->active_voices = 0;
     for (i = 0; i < FM1_DOOM_SOUND_VOICES; ++i)
@@ -323,6 +385,7 @@ void fm1_doom_sound_get_diagnostics(fm1_doom_sound_diagnostics *diagnostics)
 
 static void output(void *unused, u8 *data, int len, u8 channel)
 {
+    uint32_t control;
     (void)unused;
     if (!data || len != 512 || channel != 3 || ((uintptr_t)data & 3u)) {
         if (data && len > 0) memset(data, 0, (size_t)(len < 512 ? len : 512));
@@ -330,9 +393,15 @@ static void output(void *unused, u8 *data, int len, u8 channel)
         return;
     }
     fm1_doom_sound_mix(voices, (int32_t *)data);
-    /* Byte-sized control snapshot. CPU0 polls the ADC under volume_lock;
+#ifndef FM1_DOOM_SOUND_TEST
+    /* Native-rate recording follows music/effects balance, before physical
+     * master volume. The tap neither changes DMA samples nor takes USB locks. */
+    fm1_usb_audio_capture_push_pcm24((const int32_t *)data, 64u);
+#endif
+    /* One coherent control snapshot. CPU0 polls the ADC under volume_lock;
      * render work never delays its 2 ms sampling cadence. */
-    envelope.target_q7 = (uint8_t)volume_target_q7;
+    control = volume_target_q7;
+    envelope.target_q7 = control & SPEAKER_MUTED_BIT ? 0 : (uint8_t)control;
     fm1_audio_startup_process24(&envelope, (int32_t *)data);
     fm1_doom_sound_frames += 64u;
 }
@@ -355,6 +424,9 @@ static void audio_isr(void)
 void fm1_doom_sound_shutdown(void)
 {
     unsigned flags;
+#ifndef FM1_DOOM_SOUND_TEST
+    fm1_usb_audio_target_stop();
+#endif
     if (audio_irq_registered) bit_clr_ie(IRQ_ALNK_IDX, AUDIO_IRQ_CPU);
     flags = take();
     audio_enabled = 0;
@@ -365,7 +437,7 @@ void fm1_doom_sound_shutdown(void)
     release(flags);
     flags = volume_take();
     fm1_volume_stop(&master_volume);
-    volume_target_q7 = 0;
+    volume_target_q7 &= SPEAKER_MUTED_BIT;
     volume_release(flags);
     if (audio_irq_registered) {
         unrequest_irq(IRQ_ALNK_IDX, AUDIO_IRQ_CPU);
@@ -406,7 +478,7 @@ int fm1_doom_sound_init(void)
     /* ADC ownership/conversion errors are separate diagnostics and fail
      * muted; IIS keeps running so the fault can be observed over USB. */
     fm1_volume_start(&master_volume);
-    volume_target_q7 = 0;
+    volume_target_q7 = FM1_DOOM_BOOT_MUTED ? SPEAKER_MUTED_BIT : 0;
     volume_release(flags);
     rc = iis_open(&audio_pd, 0);
     if (rc) {

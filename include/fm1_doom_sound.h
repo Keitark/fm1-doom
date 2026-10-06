@@ -4,9 +4,13 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "i_sound.h"
+#include "fm1_doom_volume.h"
 
 #define FM1_DOOM_SOUND_VOICES 2u
 #define FM1_DOOM_SOUND_OUTPUT_RATE 44100u
+#ifndef FM1_DOOM_BOOT_MUTED
+#define FM1_DOOM_BOOT_MUTED 0
+#endif
 /* Preserve exact decoded PCM; reduce effects 6.02 dB relative to the first
  * audio build. The physical master knob scales music and effects together. */
 #define FM1_DOOM_SOUND_EFFECT_PCM24_GAIN 1
@@ -50,7 +54,7 @@ typedef struct {
     uint16_t volume_raw;
     uint8_t volume_gain, volume_valid;
     uint32_t volume_errors, volume_samples;
-    uint8_t volume_target;
+    uint8_t volume_target, speaker_muted;
     uint32_t synth_mode;
 } fm1_doom_sound_diagnostics;
 /* Bounded scalar diagnostics; no mixer lock. Values may straddle a callback.
@@ -59,6 +63,14 @@ void fm1_doom_sound_get_diagnostics(fm1_doom_sound_diagnostics *diagnostics);
 /* Existing CPU0 input timer calls this once every 2 ms, independently of DMA.
  * It owns the ADC through a separate short lock, with no music rendering. */
 void fm1_doom_sound_volume_tick(void);
+/* CPU0 changes only the published control word under the ADC-side lock.
+ * Muting ramps the speaker gain to zero; native USB capture remains active.
+ * The getter is a best-effort scalar read, without the audio/render lock. */
+void fm1_doom_sound_set_speaker_muted(unsigned muted);
+unsigned fm1_doom_sound_speaker_is_muted(void);
+/* CPU0 task-side, bounded read-only ADC/GPIO snapshot under volume_lock.
+ * Gain is a best-effort CPU1 scalar; no audio/render lock is taken. */
+void fm1_doom_sound_get_volume_hardware(fm1_doom_volume_hardware *hardware);
 /* Return zero on success. Failure leaves audio silent and is nonfatal to Doom. */
 int fm1_doom_sound_init(void);
 int fm1_doom_sound_is_ready(void);

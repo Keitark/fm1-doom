@@ -52,6 +52,12 @@ void fm1_volume_tick(fm1_volume *state)
     ++state->samples;state->raw=volume_raw;state->valid=1;state->target=(uint8_t)(volume_raw>>3);
 }
 
+uint32_t fm1_sound_test_hardware_read(uint32_t address)
+{
+    REQUIRE(locked && irq_disabled);
+    return address;
+}
+
 void fm1_doom_music_sample_stereo(int16_t *left, int16_t *right)
 {
     *left = music_left; *right = music_right;

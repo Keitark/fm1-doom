@@ -218,6 +218,7 @@ def main() -> int:
     sys.path.insert(0, str(usb))
     import build_boot as board
     import vendor_overlay
+    import doom_usb_overlay
 
     sdk = board.SDK.resolve()
     if sdk != (fm1 / "references/source/fw-AC79_AIoT_SDK").resolve():
@@ -320,6 +321,7 @@ def main() -> int:
     defines += ["-DFM1_DOOM_SOURCE_WIDTH=160", "-DFM1_DOOM_SOURCE_HEIGHT=100",
                 "-DFM1_NES_PLAYER=1", "-DFM1_TARGET_PI32V2=1",
                 "-DFM1_USB_CONTROLLER=0", "-DFM1_KEYSCAN_DMA2=1",
+                "-DFM1_DOOM_BOOT_MUTED=0",
                 "-DFM1_KEYSCAN_IRQ=1", "-DFM1_KEYSCAN_PACED=1",
                 "-DFM1_LCD_STOCK_FILL=1", "-DFM1_LCD_STOCK_DMA=1",
                 "-DFM1_LCD_STOCK_SEQUENCE=1"]
@@ -339,7 +341,10 @@ def main() -> int:
                fm1 / "firmware/nes/boot/display_test.c",
                fm1 / "firmware/nes/src/fm1_wl82_keyscan.c",
                fm1 / "firmware/nes/src/fm1_stock_keys.c", blob]
-    sources += [ROOT / "src/fm1_doom_usb.c", ROOT / "src/fm1_doom_usb_protocol.c"]
+    sources += [ROOT / "src" / name for name in (
+        "fm1_doom_usb.c", "fm1_doom_usb_protocol.c", "fm1_usb_audio_capture.c",
+        "fm1_usb_audio_profile.c", "fm1_usb_audio_target.c", "fm1_usb_packet.c")]
+    source_closure.add(ROOT / "tools/doom_usb_overlay.py")
     audio_source = ROOT / "src/fm1_doom_sound.c"
     audio_text = audio_source.read_text(encoding="utf-8")
     for statement in ("memset(&audio_pd, 0, sizeof(audio_pd));",
@@ -354,12 +359,18 @@ def main() -> int:
                 fm1 / "firmware/nes/src/fm1_audio_queue.c",
                 fm1 / "firmware/nes/src/fm1_volume.c"]
     sources += [path for path, _ in private_banks.values()]
-    sources += [usb / name for name in ("descriptors.c", "usb_policy.c", "dma.c",
-                                       "rx_channel.c", "boot_entry.c")]
+    sources += [usb / name for name in ("dma.c", "rx_channel.c", "boot_entry.c")]
+    for name, transform in (("descriptors.c", doom_usb_overlay.descriptors),
+                            ("usb_policy.c", doom_usb_overlay.policy)):
+        original = usb / name
+        target = out / ("doom-" + name)
+        target.write_text(transform(original.read_text(encoding="utf-8"), vendor_overlay), encoding="utf-8")
+        sources.append(target)
+        source_closure.add(original)
     sources.append(sdk / "apps/common/usb/usb_config.c")
     overlays = {}
-    for name, transform in (("cdc.c", vendor_overlay.cdc),
-                            ("usb_device.c", vendor_overlay.device),
+    for name, transform in (("cdc.c", lambda text: doom_usb_overlay.cdc(text, vendor_overlay)),
+                            ("usb_device.c", lambda text: doom_usb_overlay.device(text, vendor_overlay)),
                             ("msd_upgrade.c", vendor_overlay.boot_entry)):
         original = sdk / "apps/common/usb/device" / name
         target = out / ("fm1-" + name)
@@ -374,6 +385,7 @@ def main() -> int:
              "-D__LD__", "-E", "-P", str(path), "-o", str(out / name)])
     used = out / "sdk.used"
     retained = ["memory_init", "app_main", "fm1_doom_usb_task", "cdc_read_data",
+                "fm1_cdc_write_packet",
                 "cdc_write_data", "fm1_cdc_ready", "fm1_usb_device_descriptor",
                 "fm1_usb_config_descriptor", "fm1_usb_rx_irq", "go_mask_usb_updata",
                 "nvram_set_boot_state", "fm1_wl82_keyscan_async_raw", "jiffies_half_msec"]
@@ -385,6 +397,8 @@ def main() -> int:
                  "fm1_doom_music_score", "fm1_doom_music_score_len",
                  "fm1_doom_genmidi_bank", "fm1_doom_genmidi_bank_len"]
     retained += ["sprintf", "snprintf", "vsprintf", "vsnprintf", "print", "printf", "vprintf", "perror"]
+    retained += ["fm1_uac_desc_config", "fm1_usb_audio_capture_descriptor",
+                 "fm1_usb_audio_capture_push_pcm24", "fm1_usb_packet_write"]
     used.write_text(used.read_text() + "\n" + "\n".join(retained) + "\n")
     ld = (out / "sdk.ld").read_text()
     for old, new in (("*(.data)", "*(.data .data.*)"), ("*(.bss)", "*(.bss .bss.*)")):
@@ -479,6 +493,9 @@ def main() -> int:
              str(elf), str(part)])
         parts.append(part.read_bytes())
     image_offset = image_vma - text_vma
+    usb_audio = doom_usb_overlay.capture_link(
+        run([str(board.TC / "llvm-nm.exe"), "-S", "--size-sort", str(elf)]),
+        parts[0], text_vma, (ROOT / "src/fm1_usb_audio_profile.c").read_text(encoding="utf-8"))
     if parts[0][image_offset:image_offset + len(source)] != source:
         raise ValueError("embedded flash bytes differ from the validated FMD1 archive")
     bank_link_info = {}
@@ -539,7 +556,9 @@ def main() -> int:
         "usb_diagnostic_stack": usb_stack_budget,
         "audio": {"output": "IIS_PORTC ALINK0 channel 3 signed 24-bit stereo at 44100 Hz",
                   "sfx_voices": 2, "private_xip_banks": bank_link_info,
+                  "boot_speaker_muted": False,
                   "dynamic_dma_bytes": audio_allocations["total_requested_bytes"]},
+        "usb_audio": usb_audio,
         "usb_controller": 0,
         "usb_recovery": "CDC status, cooperative stop and guarded IRQ-context UBOOT entry",
         "keyscan_mode": "DMA2 IRQ with 1 ms pacing",

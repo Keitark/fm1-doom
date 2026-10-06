@@ -8,10 +8,12 @@
 
 typedef struct {
     char output[8192];
-    unsigned used, stop_requests, arm_calls, frame_ends, frame_reads, heap_queries;
+    unsigned used, stop_requests, arm_calls, frame_ends, frame_reads, heap_queries, volume_queries;
+    unsigned mute_requests;
     int stopped, drained, arm_result;
     struct fm1_doom_usb_status status;
     struct fm1_doom_usb_game game;
+    struct fm1_doom_usb_volume volume;
     fm1_doom_usb_frame_control frame;
 } fake_usb;
 
@@ -34,6 +36,20 @@ static int get_heap_free(void *context)
     fake_usb *fake = context;
     ++fake->heap_queries;
     return fake->status.heap_free;
+}
+static void get_volume(void *context, struct fm1_doom_usb_volume *volume)
+{
+    fake_usb *fake = context;
+    ++fake->volume_queries;
+    *volume = fake->volume;
+}
+static void format_usb_audio(char *out, size_t length)
+{ snprintf(out, length, "DOOM USB_AUDIO rate=44100 active=0\n"); }
+static void set_speaker_muted(void *context, unsigned muted)
+{
+    fake_usb *fake = context;
+    ++fake->mute_requests;
+    fake->status.speaker_muted = muted;
 }
 
 static void request_stop(void *context) { ++((fake_usb *)context)->stop_requests; }
@@ -88,7 +104,7 @@ int main(void)
     const fm1_doom_usb_protocol_io io = {
         &fake, capture, get_status, request_stop, is_stopped, tx_drained, boot_arm,
         get_game, frame_begin, frame_info, frame_read, frame_end, frame_tick,
-        get_heap_free
+        get_heap_free, get_volume, format_usb_audio, set_speaker_muted
     };
     char overflow[FM1_DOOM_USB_LINE_BYTES + 16u];
     unsigned i;
@@ -97,6 +113,34 @@ int main(void)
     CHECK(!fake.used);
     feed(&protocol, "LLO\n", 101, &io);
     CHECK(!strcmp(fake.output, "FM1DIAG/1 DOOM-FM1/1 UBOOT=SERIAL COMMIT=BLOCKED\n"));
+    memset(&fake, 0, sizeof(fake));
+    feed(&protocol, "DOOM USB_AUDIO\n", 102, &io);
+    CHECK(!strcmp(fake.output, "DOOM USB_AUDIO rate=44100 active=0\n"));
+    { fm1_doom_usb_protocol_io unavailable = io;
+      unavailable.format_usb_audio = 0;
+      memset(&fake, 0, sizeof(fake));
+      feed(&protocol, "DOOM USB_AUDIO\n", 103, &unavailable);
+      CHECK(!strcmp(fake.output, "ERR USB_AUDIO_UNAVAILABLE\n")); }
+
+    memset(&fake, 0, sizeof(fake));
+    feed(&protocol, "DOOM MU", 104, &io);
+    CHECK(!fake.mute_requests && !fake.used);
+    feed(&protocol, "TE 1\n", 105, &io);
+    CHECK(fake.mute_requests == 1 && fake.status.speaker_muted == 1);
+    CHECK(!strcmp(fake.output, "OK DOOM MUTE 1\n"));
+    feed(&protocol, "DOOM MUTE 0\n", 106, &io);
+    CHECK(fake.mute_requests == 2 && !fake.status.speaker_muted);
+    CHECK(!strcmp(fake.output, "OK DOOM MUTE 1\nOK DOOM MUTE 0\n"));
+    feed(&protocol, "DOOM MUTE 2\nDOOM MUTE -1\nDOOM MUTE 01\nDOOM MUTE 1 X\nMUTE 1\n", 107, &io);
+    CHECK(fake.mute_requests == 2 && !fake.status.speaker_muted);
+    feed(&protocol, "DOOM MUTE 1\r\n", 108, &io);
+    CHECK(fake.mute_requests == 2 && strstr(fake.output, "ERR LINE ABORTED\n"));
+    { fm1_doom_usb_protocol_io unavailable = io;
+      unavailable.set_speaker_muted = 0;
+      feed(&protocol, "DOOM MUTE 1\n", 109, &unavailable);
+      CHECK(fake.mute_requests == 2 && !fake.status.speaker_muted);
+      CHECK(strstr(fake.output, "ERR MUTE_UNAVAILABLE\n")); }
+    CHECK(!fake.stop_requests && !fake.arm_calls && !fake.volume_queries && !fake.heap_queries);
 
     memset(&fake, 0, sizeof(fake));
     fake.status.stage = 255;
@@ -113,6 +157,7 @@ int main(void)
     CHECK(!strchr(fake.output, '\r'));
     CHECK(strstr(fake.output + 1, "DOOM STATUS"));
     CHECK(!fake.heap_queries);
+    CHECK(!fake.volume_queries);
 
     memset(&fake, 0, sizeof(fake));
     fake.status.now_ms = 12000;
@@ -182,16 +227,54 @@ int main(void)
     fake.status.volume_samples = UINT32_MAX;
     fake.status.volume_target = 127;
     fake.status.synth_mode = 1;
+    fake.status.speaker_muted = 1;
     fake.status.heap_free = INT32_MAX;
     feed(&protocol, "DOOM AU", 220, &io);
     CHECK(!fake.used);
     feed(&protocol, "DIO\n", 221, &io);
     CHECK(!strcmp(fake.output,
-          "DOOM AUDIO ready=1 error=-42 irqs=4294967295 frames=4294967295 sfx_started=4294967295 sfx_voices=2 music_playing=1 music_ticks=4294967295 music_events=4294967295 music_loops=4294967295 music_steals=4294967295 music_errors=4294967295 music_voices=8 usb_stack_words=500 max_irq_us=1000 volume_raw=1023 volume_gain=127 volume_valid=1 volume_errors=4294967295 volume_samples=4294967295 volume_target=127 synth_mode=1 heap_free=2147483647\n"));
-    CHECK(fake.used < 510 && !fake.stop_requests && !fake.arm_calls);
+          "DOOM AUDIO ready=1 error=-42 irqs=4294967295 frames=4294967295 sfx_started=4294967295 sfx_voices=2 music_playing=1 music_ticks=4294967295 music_events=4294967295 music_loops=4294967295 music_steals=4294967295 music_errors=4294967295 music_voices=8 usb_stack_words=500 max_irq_us=1000 volume_raw=1023 volume_gain=127 volume_valid=1 volume_errors=4294967295 volume_samples=4294967295 volume_target=127 synth_mode=1 speaker_muted=1 heap_free=2147483647\n"));
+    CHECK(fake.used < 512 && fake.output[fake.used - 1] == '\n' && !fake.stop_requests && !fake.arm_calls);
     CHECK(fake.heap_queries == 1);
+    CHECK(!fake.volume_queries);
     feed(&protocol, "DOOM AUDIO\r\n", 222, &io);
     CHECK(strstr(fake.output, "ERR LINE ABORTED\n"));
+
+    memset(&fake, 0, sizeof(fake));
+    fake.volume.now_ms = UINT32_MAX;
+    fake.volume.sys_hz = INT32_MIN; fake.volume.lsb_hz = INT32_MAX;
+    fake.volume.hardware.adc_con = 0xf4deu; fake.volume.hardware.adc_res = 260;
+    fake.volume.hardware.pb_dir = UINT32_MAX; fake.volume.hardware.pb_die = 0xffffffbfu;
+    fake.volume.hardware.pb_pu = fake.volume.hardware.pb_pd = fake.volume.hardware.pb_hd0 = 0xffffffbfu;
+    fake.volume.hardware.pb_hd1 = 0x12345678u; fake.volume.hardware.pb_dieh = 0xffffffbfu;
+    fake.volume.hardware.wla_con0 = 0x20005u; fake.volume.hardware.pll_con1 = 0xfffeffffu;
+    fake.volume.hardware.raw = fake.volume.hardware.accepted = 260;
+    fake.volume.hardware.target = fake.volume.hardware.gain = 32;
+    fake.volume.hardware.running = fake.volume.hardware.valid = 1;
+    fake.volume.hardware.samples = fake.volume.hardware.errors = UINT32_MAX;
+    feed(&protocol, "DOOM VOL", 223, &io);
+    CHECK(!fake.used && !fake.volume_queries);
+    feed(&protocol, "UME\n", 224, &io);
+    CHECK(!strcmp(fake.output,
+          "DOOM VOLUME ms=4294967295 adc_con=0000f4de adc_res=260 pb_dir=ffffffff pb_die=ffffffbf pb_pu=ffffffbf pb_pd=ffffffbf pb_hd0=ffffffbf pb_hd1=12345678 pb_dieh=ffffffbf wla_con0=00020005 pll_con1=fffeffff raw=260 accepted=260 target=32 gain=32 run=1 valid=1 waiting=0 samples=4294967295 errors=4294967295 sys_hz=-2147483648 lsb_hz=2147483647\n"));
+    CHECK(fake.volume_queries == 1 && !fake.heap_queries && !fake.stop_requests && !fake.arm_calls);
+    CHECK(fake.used < 512 && fake.output[fake.used - 1] == '\n');
+    feed(&protocol, "VOLUME\n", 225, &io);
+    CHECK(fake.volume_queries == 2);
+    {
+        fm1_doom_usb_protocol_io without_volume = io;
+        without_volume.get_volume = 0;
+        feed(&protocol, "DOOM VOLUME\n", 226, &without_volume);
+        CHECK(strstr(fake.output, "ERR VOLUME_UNAVAILABLE\n") && fake.volume_queries == 2);
+    }
+    feed(&protocol, "DOOM VOLUME X\n", 227, &io);
+    CHECK(strstr(fake.output, "ERR COMMAND\n") && fake.volume_queries == 2);
+    fake.used = 0; fake.output[0] = 0;
+    memset(&fake.volume.hardware, 0xff, sizeof(fake.volume.hardware));
+    feed(&protocol, "DOOM VOLUME\n", 228, &io);
+    CHECK(fake.used < 512 && fake.output[fake.used - 1] == '\n' &&
+          strstr(fake.output, "errors=4294967295 sys_hz=-2147483648 lsb_hz=2147483647\n"));
+    CHECK(fake.volume_queries == 3 && !fake.heap_queries && !fake.stop_requests && !fake.arm_calls);
 
     memset(&fake, 0, sizeof(fake));
     fake.game.stage = 4; fake.game.tic = 123; fake.game.state = 0;

@@ -6,9 +6,12 @@
 #include "usb/usb_config.h"
 #include "boot_entry.h"
 #include "fm1_doom_usb.h"
+#include "fm1_doom_sound.h"
+#include "fm1_usb_audio_target.h"
 
 extern int fm1_cdc_ready(usb_dev id);
 extern volatile unsigned fm1_cdc_generation;
+extern u32 fm1_cdc_write_packet(usb_dev id, u8 *data, u32 length, unsigned generation);
 /* Pinned SDK global allocator query; called only for an explicit AUDIO
  * request, outside the audio lock. It walks allocator metadata under lock. */
 extern int get_malloc_remain_heap_size(void);
@@ -16,7 +19,9 @@ extern int get_malloc_remain_heap_size(void);
 volatile uint32_t fm1_doom_usb_stage, fm1_doom_usb_heartbeat, fm1_doom_usb_tx_dropped;
 volatile int fm1_doom_usb_error;
 static fm1_doom_usb_protocol protocol;
-static char tx[1024];
+/* Each protocol reply is capped at 511 bytes. Keep one complete reply while
+ * preserving heap room for the SDK's late IIS DMA allocation. */
+static char tx[512];
 static unsigned tx_read, tx_write;
 
 static void reply(void *context, const char *text)
@@ -74,6 +79,10 @@ static void frame_tick(void *context, uint32_t now)
 { (void)context; fm1_doom_usb_frame_tick(now); }
 static int get_heap_free(void *context)
 { (void)context; return get_malloc_remain_heap_size(); }
+static void get_volume(void *context, struct fm1_doom_usb_volume *volume)
+{ (void)context; fm1_doom_usb_get_volume(volume); }
+static void set_speaker_muted(void *context, unsigned muted)
+{ (void)context; fm1_doom_sound_set_speaker_muted(muted); }
 
 void __attribute__((noinline, used)) fm1_doom_usb_task(void *argument)
 {
@@ -83,10 +92,11 @@ void __attribute__((noinline, used)) fm1_doom_usb_task(void *argument)
     const fm1_doom_usb_protocol_io io = {
         0, reply, get_status, request_stop, is_stopped, tx_drained, boot_arm,
         get_game, frame_begin, frame_info, frame_read, frame_end, frame_tick,
-        get_heap_free
+        get_heap_free, get_volume, fm1_usb_audio_target_status, set_speaker_muted
     };
     (void)argument;
     fm1_doom_usb_stage = 1;
+    fm1_usb_audio_target_init();
     fm1_doom_usb_error = usb_device_mode(FM1_USB_CONTROLLER, CDC_CLASS);
     if (fm1_doom_usb_error) {
         fm1_doom_usb_stage = 0xff;
@@ -128,7 +138,7 @@ void __attribute__((noinline, used)) fm1_doom_usb_task(void *argument)
             length = tx_write - tx_read;
             if (length > sizeof(output)) length = sizeof(output);
             for (i = 0; i < length; ++i) output[i] = tx[(tx_read + i) % sizeof(tx)];
-            if (length) tx_read += cdc_write_data(FM1_USB_CONTROLLER, output, length);
+            if (length) tx_read += fm1_cdc_write_packet(FM1_USB_CONTROLLER, output, length, generation);
         }
         os_time_dly(1);
     }

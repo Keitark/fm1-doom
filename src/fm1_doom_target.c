@@ -45,7 +45,7 @@ const struct task_info task_info_table[] = {
     {"sys_event", 29, 512, 0},
     {"systimer", 14, 256, 0},
     {"sys_timer", 9, 512, 128},
-    {"#C0doom_usb", 11, 768, 0}, /* CPU0 stays available while CPU1 renders OPL. */
+    {"#C0doom_usb", 11, 640, 0}, /* 2560 B: emitted chain + 1024 B SDK margin. */
     {"#C0fm1_doom", 10, 2048, 0}, /* SDK stack size is in 32-bit words: 8 KiB. */
     {0, 0, 0, 0, 0},
 };
@@ -131,6 +131,7 @@ void fm1_doom_usb_get_status(struct fm1_doom_usb_status *status)
     status->volume_samples = sound.volume_samples;
     status->volume_target = sound.volume_target;
     status->synth_mode = sound.synth_mode;
+    status->speaker_muted = sound.speaker_muted;
     status->music_ticks = music.ticks;
     status->music_events = music.events;
     status->music_loops = music.loops;
@@ -139,6 +140,14 @@ void fm1_doom_usb_get_status(struct fm1_doom_usb_status *status)
     status->music_voices = music.active_voices;
     /* This getter runs on doom_usb; FreeRTOS reports unused stack words. */
     status->usb_stack_words = uxTaskGetStackHighWaterMark(NULL);
+}
+
+void fm1_doom_usb_get_volume(struct fm1_doom_usb_volume *volume)
+{
+    fm1_doom_sound_get_volume_hardware(&volume->hardware);
+    volume->now_ms = timer_get_ms();
+    volume->sys_hz = clk_get("sys");
+    volume->lsb_hz = clk_get("lsb");
 }
 
 static unsigned frame_take(void)

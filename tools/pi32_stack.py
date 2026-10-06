@@ -96,9 +96,11 @@ def inspect_text(symbol_text, disassembly):
             instructions.append((int(match[1], 16), match[2].strip()))
     selected = ("fm1_doom_usb_task", "command", "fm1_doom_usb_protocol_feed",
                 "fm1_doom_usb_protocol_status", "fm1_doom_usb_protocol_trace",
-                "fm1_doom_usb_protocol_audio", "game_status", "frame_info", "frame_read",
+                "fm1_doom_usb_protocol_audio", "fm1_doom_usb_protocol_volume", "fm1_doom_usb_protocol_usb_audio", "game_status", "frame_info", "frame_read",
+                "fm1_usb_audio_target_status",
                 "get_status", "get_game", "snprintf", "vsnprintf", "decimal", "repeat", "string",
-                "audio_isr", "iis_irq_handler", "output", "scan_isr", "timer1_isr", "timer4_isr", "usb0_g_isr", "fm1_usb_rx_irq")
+                "audio_isr", "iis_irq_handler", "output", "scan_isr", "timer1_isr", "timer4_isr", "usb0_g_isr", "fm1_usb_rx_irq",
+                "fm1_doom_sound_get_volume_hardware", "fm1_doom_usb_get_volume", "get_volume", "volume_take", "volume_release")
     by_address = {a: name for name, (a, size) in symbols.items()}
     frames = {}
     for name, (start, size) in symbols.items():
@@ -110,7 +112,7 @@ def inspect_text(symbol_text, disassembly):
             item["direct_calls"] = [by_address.get(address, hex(address)) for address in item.pop("direct_call_addresses")]
             frames[name] = item
     return {"functions": frames,
-            "missing_boundaries": [n for n in selected[:9] if n not in frames],
+            "missing_boundaries": [n for n in selected[:10] if n not in frames],
             "limitation": "Indirect callbacks, SDK recursion/tail calls, IRQ nesting and hardware context require an explicit reviewed bound; absence of a large frame alone does not prove a task fits."}
 
 
@@ -138,7 +140,7 @@ def usb_diagnostic_budget(report, stack_bytes):
         raise ValueError("USB command stack boundary is missing or ambiguous after LTO")
     dispatcher = frames[dispatch[0]]
     required = ("fm1_doom_usb_protocol_status", "fm1_doom_usb_protocol_trace",
-                "fm1_doom_usb_protocol_audio", "game_status", "frame_info", "frame_read")
+                "fm1_doom_usb_protocol_audio", "fm1_doom_usb_protocol_volume", "fm1_doom_usb_protocol_usb_audio", "game_status", "frame_info", "frame_read")
     handlers = []
     for base in required:
         candidates = [name for name in dispatcher["direct_calls"] if name in frames
@@ -163,8 +165,19 @@ def usb_diagnostic_budget(report, stack_bytes):
         raise ValueError("USB formatter helper has an unreviewed nested call")
     formatter = frames["snprintf"]["frame_bytes"] + frames["vsnprintf"]["frame_bytes"] + max(
         frames[name]["frame_bytes"] for name in ("decimal", "repeat", "string"))
-    largest = max(handlers, key=lambda name: frames[name]["frame_bytes"])
-    chain = task["frame_bytes"] + dispatcher["frame_bytes"] + frames[largest]["frame_bytes"] + formatter
+    audio_handler = next(name for name in handlers if name.startswith("fm1_doom_usb_protocol_usb_audio"))
+    audio_helpers = [name for name in frames[audio_handler]["direct_calls"]
+                     if name in frames and name.startswith("fm1_usb_audio_target_status")]
+    if len(audio_helpers) != 1:
+        raise ValueError("USB audio formatter stack boundary is missing")
+    helper = audio_helpers[0]
+    if frames[helper]["indirect_calls"] or frames[helper].get("tail_calls"):
+        raise ValueError("USB audio formatter contains an unreviewed indirect or tail call")
+    handler_sizes = {name: frames[name]["frame_bytes"] +
+                     (frames[helper]["frame_bytes"] if name == audio_handler else 0)
+                     for name in handlers}
+    largest = max(handlers, key=handler_sizes.get)
+    chain = task["frame_bytes"] + dispatcher["frame_bytes"] + handler_sizes[largest] + formatter
     margin = 1024
     if chain + margin > stack_bytes:
         raise ValueError(f"USB diagnostic stack {chain} plus SDK margin {margin} exceeds {stack_bytes}")
@@ -173,6 +186,7 @@ def usb_diagnostic_budget(report, stack_bytes):
             "remaining_after_chain_and_margin_bytes": stack_bytes - chain - margin,
             "chain": [task_name, dispatch[0], largest, "snprintf", "vsnprintf", "largest integer helper"],
             "handler_frames": {name: frames[name]["frame_bytes"] for name in handlers},
+            "usb_audio_formatter_frame_bytes": frames[helper]["frame_bytes"],
             "scope": "emitted diagnostic USP frames; SDK callback paths and separate IRQ SSP retain live acceptance"}
 
 

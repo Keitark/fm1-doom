@@ -14,9 +14,14 @@ transfer failures, record a bounded RAM message and stop LCD/scanner/audio;
 USB status and serial UBOOT remain available. Audio initialization failure is
 nonfatal to rendering and is reported separately. The earlier `fc03a11` build
 was audible; the `58b9ac4` USB repair reported an IIS initialization failure.
-The installed `03492fc` allocation fix is now audible according to the user,
-but the knob has no effect and USB appears unresponsive. The next candidate's
-CPU/interrupt and knob-polling changes remain pending hardware verification.
+The installed `8a36a90` CPU/interrupt and door correction passed complete
+readback and serial boot observation. The knob remains unresponsive and audio
+callbacks exceed their budget. The next candidate adds exact OPL optimizations,
+read-only ADC register diagnostics and capture-only USB audio. The first UAC
+image enumerated after UBOOT reset but failed IIS initialization; USB was absent
+after the user's reset while Doom remained visible. The replacement restores
+memory headroom and boots with ADC-controlled gain. USB capture is before
+master gain. See [current bench evidence](PORT_STATUS.md).
 
 The first-stage game contains E1M1 only. Its original image menu offers New
 Game and graphic detail; completing E1M1 starts E1M1 again rather than entering
@@ -73,7 +78,7 @@ is recorded below. The generated file includes derived game
 data and is ignored by Git; keep it private. Check its size and SHA-256
 against the manifest before loading it in your UBOOT program.
 
-## Installed audio allocation revision
+## Historical installed audio allocation revision
 
 Revision `03492fc` produces a 555,024 B app, SHA-256
 `fb230df6e1d5bf6f13232551d26638a1caea01eb012a2a3b2a67c91e6cf8b246`.
@@ -118,7 +123,7 @@ One reset completed, but HELLO timed out while COM10 enumerated. The user now
 confirms audible music, no knob effect and apparently unresponsive USB. Windows
 currently sees no FM-1 port; fresh device diagnostics await reconnection.
 
-## Next CPU/volume candidate: hardware verification pending
+## Historical CPU/volume candidate (subsequently installed in 8a36a90)
 
 Doom and USB tasks use CPU0 `#C0` bindings. ALINK is owned by CPU1 at priority
 3; CPU0's ALINK route is masked and teardown unregisters CPU1. The existing
@@ -134,7 +139,7 @@ sound and volume-integration contracts pass. The integration test also proves
 scalar diagnostics return while the mixer lock is held. All 79 engine and
 seven port sources were freshly recompiled and the target link passes.
 
-| Current candidate item | Value |
+| Historical candidate item | Value |
 | --- | --- |
 | Plain app / slot headroom | 555,120 B / 29,836 B |
 | App SHA-256 | `b0efff90e99d7f767c8e938f32d2906120f2fe07ff8604ec2b80c33a8315356e` |
@@ -145,10 +150,10 @@ seven port sources were freshly recompiled and the target link passes.
 | USB task / diagnostic chain / SDK margin | 3,072 B / 1,460 B / 1,024 B; 588 B remaining |
 | Emitted status / trace / audio handler frames | 968 B / 944 B / 1,136 B |
 
-These changes are not installed and do not establish the cause of the observed
-USB loss or a working physical knob. Packaging requires a fresh protected
-writer session using the verified `d2ed…` readback; the old observation failure
-latch stays intact. Reconnection and physical UBOOT entry are pending.
+These changes were subsequently installed in8a36a90 with the door correction.
+They do not establish the cause of the observed knob fault. See the current
+bench evidence above for later images, readback receipts and open USB/audio
+acceptance; this table preserves the earlier build's measurements.
 
 ## Historical installed audio application
 

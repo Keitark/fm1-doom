@@ -15,6 +15,7 @@ unsigned fm1_sound_test_irq_save(void);
 void fm1_sound_test_irq_restore(unsigned);
 void fm1_sound_test_lock(spinlock_t *);
 void fm1_sound_test_unlock(spinlock_t *);
+uint32_t fm1_sound_test_hardware_read(uint32_t);
 #define local_irq_save(flags) ((flags) = fm1_sound_test_irq_save())
 #define local_irq_restore(flags) fm1_sound_test_irq_restore(flags)
 #define arch_spin_lock(lock) fm1_sound_test_lock(lock)

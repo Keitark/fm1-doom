@@ -11,6 +11,11 @@ saving 512 bytes of RAM; immutable waveform masks live in XIP. Native synthesis
 remains 49,716 Hz and is resampled by the audio port. ARM block rendering,
 floating point conversion, timers, and ADPCM peripherals are unused.
 
+The noise LFSR advances in exact eight-step GF(2) chunks and short-noise work
+is skipped while rhythm mode is disabled. Its state remains identical if
+rhythm is enabled later. Tests compare 65,536 arbitrary-seed rhythm-toggle
+samples with the unchanged core, in addition to the full E1M1 PCM comparison.
+
 Original source SHA-256:
 
 `src/fm1_doom_opl.c` separately adapts the same pinned repository's

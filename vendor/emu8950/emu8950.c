@@ -763,13 +763,21 @@ static INLINE void update_ampm(OPL *opl) {
 }
 static void update_noise(OPL *opl, int cycle) {
 #if !EMU8950_SIMPLER_NOISE
-    int i;
-    for (i = 0; i < cycle; i++) {
-        if (opl->noise & 1) {
-            opl->noise ^= 0x800200;
-        }
-        opl->noise >>= 1;
+    uint32_t noise = opl->noise;
+    /* This Galois LFSR injects feedback into bits8 and22 after shifting.
+     * Over at most8 steps, injected bits cannot reach bit0 again, so the
+     * outgoing low bits can be applied together. Keep the exact noise
+     * clock even outside rhythm mode, including a later rhythm key-on. */
+    while (cycle >= 8) {
+        uint32_t low = noise & 255u;
+        noise = (noise >> 8) ^ (low << 1) ^ (low << 15);
+        cycle -= 8;
     }
+    if (cycle) {
+        uint32_t low = noise & ((1u << cycle) - 1u);
+        noise = (noise >> cycle) ^ (low << (9 - cycle)) ^ (low << (23 - cycle));
+    }
+    opl->noise = noise;
 #endif
 }
 
@@ -1118,7 +1126,9 @@ static void update_output(OPL *opl) {
     if (opl->mask & (OPL_MASK_CYM | OPL_MASK_HH))
         update_short_noise(opl);
 #else
-    update_short_noise(opl);
+    /* Only rhythm operators consume short_noise. Its phase inputs are
+     * unchanged, and it is recomputed before the first enabled sample. */
+    if (opl_perc_mode(opl)) update_short_noise(opl);
 #endif
     update_slots(opl);
 

@@ -12,30 +12,30 @@ class TargetBudgetTests(unittest.TestCase):
     def test_reviewed_task_budget(self):
         source = (ROOT / "src/fm1_doom_target.c").read_text(encoding="utf-8")
         budget = task_heap_budget(source, 1236)
-        self.assertEqual(budget["minimum_task_heap_bytes"], 37_464)
-        self.assertEqual(budget["required_linker_heap_bytes"], 43_596)
+        self.assertEqual(budget["minimum_task_heap_bytes"], 36_952)
+        self.assertEqual(budget["required_linker_heap_bytes"], 43_084)
 
     def test_old_stack_exceeds_previous_linker_heap(self):
         source = (ROOT / "src/fm1_doom_target.c").read_text(encoding="utf-8")
         source = source.replace('"#C0fm1_doom", 10, 2048', '"#C0fm1_doom", 10, 8192')
         budget = task_heap_budget(source, 1236)
-        self.assertEqual(budget["required_linker_heap_bytes"], 68_172)
+        self.assertEqual(budget["required_linker_heap_bytes"], 67_660)
         self.assertGreater(budget["required_linker_heap_bytes"], 48_332)
 
     def test_audio_dma_is_reserved_before_runtime_margin(self):
         source = (ROOT / "src/fm1_doom_target.c").read_text(encoding="utf-8")
         budget = task_heap_budget(source, 1236, 1024)
-        self.assertEqual(budget["minimum_task_heap_bytes"], 37_464)
+        self.assertEqual(budget["minimum_task_heap_bytes"], 36_952)
         self.assertEqual(budget["audio_dynamic_heap_bytes"], 1024)
         self.assertEqual(budget["required_runtime_reserve_bytes"], 4096)
-        self.assertEqual(budget["required_linker_heap_bytes"], 44_620)
+        self.assertEqual(budget["required_linker_heap_bytes"], 44_108)
 
     def test_usb_reduction_returns_heap_without_changing_doom_stack(self):
         source = (ROOT / "src/fm1_doom_target.c").read_text(encoding="utf-8")
-        previous = source.replace('"#C0doom_usb", 11, 768', '"#C0doom_usb", 11, 1024')
+        previous = source.replace('"#C0doom_usb", 11, 640', '"#C0doom_usb", 11, 768')
         current = task_heap_budget(source, 1236, 1024)
         old = task_heap_budget(previous, 1236, 1024)
-        self.assertEqual(old["minimum_task_heap_bytes"] - current["minimum_task_heap_bytes"], 1024)
+        self.assertEqual(old["minimum_task_heap_bytes"] - current["minimum_task_heap_bytes"], 512)
         doom = next(task for task in current["tasks"] if task["name"] == "fm1_doom")
         self.assertEqual(doom["stack_bytes"], 8192)
 

@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "fm1_doom_volume.h"
 
 struct fm1_doom_usb_status {
     uint32_t stage, frames, lcd_stage;
@@ -24,6 +25,7 @@ struct fm1_doom_usb_status {
     uint32_t volume_raw, volume_gain, volume_valid, volume_errors;
     uint32_t volume_samples, volume_target;
     uint32_t synth_mode;
+    uint32_t speaker_muted;
     int heap_free;
 };
 
@@ -31,6 +33,13 @@ void fm1_doom_usb_get_status(struct fm1_doom_usb_status *status);
 void fm1_doom_usb_request_stop(void);
 int fm1_doom_usb_is_stopped(void);
 void fm1_doom_usb_task(void *argument);
+
+struct fm1_doom_usb_volume {
+    fm1_doom_volume_hardware hardware;
+    uint32_t now_ms;
+    int sys_hz, lsb_hz;
+};
+void fm1_doom_usb_get_volume(struct fm1_doom_usb_volume *volume);
 
 struct fm1_doom_usb_game {
     uint32_t stage, tic, angle;
@@ -84,6 +93,9 @@ typedef struct {
     void (*frame_end)(void *context);
     void (*frame_tick)(void *context, uint32_t now_ms);
     int (*get_heap_free)(void *context);
+    void (*get_volume)(void *context, struct fm1_doom_usb_volume *volume);
+    void (*format_usb_audio)(char *out, size_t length);
+    void (*set_speaker_muted)(void *context, unsigned muted);
 } fm1_doom_usb_protocol_io;
 
 void fm1_doom_usb_protocol_reset(fm1_doom_usb_protocol *protocol);
@@ -97,5 +109,7 @@ void fm1_doom_usb_protocol_tick(fm1_doom_usb_protocol *protocol,
 void fm1_doom_usb_protocol_status(const fm1_doom_usb_protocol_io *io);
 void fm1_doom_usb_protocol_trace(const fm1_doom_usb_protocol_io *io);
 void fm1_doom_usb_protocol_audio(const fm1_doom_usb_protocol_io *io);
+void fm1_doom_usb_protocol_volume(const fm1_doom_usb_protocol_io *io);
+void fm1_doom_usb_protocol_usb_audio(const fm1_doom_usb_protocol_io *io);
 
 #endif
