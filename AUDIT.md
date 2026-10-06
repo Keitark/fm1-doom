@@ -14,7 +14,7 @@ bitcode, and the linked PI32V2 instructions. These corrections are implemented:
 | Eight identical LCD rows repeat palette sampling | Expand one sampled row and copy seven rows | Gameplay lookups fall from 53,760 to 840 per frame; all output pixels match the reference |
 | CRC loops eight times per byte | Use two nibble table steps | Existing CRC tests and complete archive reads pass |
 | Disabled console formats output that is discarded | Discard routine console output directly; retain fatal RAM message | SDK `printf` has no output transport |
-| Build freshness ignores included headers | Check recursive headers/configuration and freeze their hashes | Engine/port objects checked; final audio closure includes 411 source/config/header files |
+| Build freshness ignores included headers | Check recursive headers/configuration and freeze their hashes | Engine/port objects checked; latest door-fix candidate freezes 424 source/config/header files |
 | Converter and LCD driver each hold a 3,840 B strip | Share the driver's persistent synchronous DMA strip and skip alias copies | Full pixel comparison and external-buffer contract pass |
 | Switch/animation definitions occupy mutable RAM | Make both generated definition tables constant in XIP | 1,464 B tables; 1,472 B recovered in the actual link including alignment |
 | Synchronous key-scanner startup can hide the first frame on failure | Reuse NES DMA2/paced IRQ scanning with neutral input and bounded retries | Working NES documented `KEY_START rc=-3 frame=0`; scanner BUSY is handled separately |
@@ -31,6 +31,7 @@ bitcode, and the linked PI32V2 instructions. These corrections are implemented:
 | IIS DMA allocation is absent from the startup model | Include the pinned driver's 1024 B ping-pong buffer in the heap requirement | Channel 3, 128 points and 24-bit stereo produce 64 frames/512 B per callback |
 | Audio shutdown could race the SDK callback | Use an attributed ALINK ISR and one IRQ-safe sound/music lock; quiesce the IRQ before IIS close | Host lifecycle/control tests and linked call-chain review; physical shutdown verification remains pending |
 | SDK format/string archive members retain software floating point | Use bounded integer formatting, base-aware integer parsing and local allocation/copy `strdup` | The first audio link was 595,216 B; an intermediate correction was 593,488 B. Both exceeded the 584,956 B slot and were not flash candidates |
+| Graphics pruning moves `BIGDOOR2` to reserved texture index zero | Retain the original `AASTINKY` texture-zero entry and its `WALL00_3` patch closure | Synthetic regression fails with the old pruner; corrected host closed-door views are opaque in both modes, and F5 changes the door ceiling from 0 to 68 |
 
 The trimmed main menu contains only New Game and Options. Its original image
 patches and finer menu scaling remain. Gameplay toggles between exact 8×8 LCD
@@ -61,9 +62,11 @@ blocks and all 160×93 gameplay samples, with detailed HUD in both modes.
 - Unused FAT closure removal saves 41,504 B in the original size probe,
   retaining the three SDFILE configuration drivers. Final link checks their
   exact 360-byte registration and rejects unintended FAT drivers.
-- Lossless graphics compaction reduces the archive from 177,331 to 170,505 B.
-  All 493 names/order, 424 decoded patches and 70 composite textures remain;
-  all maps/flats/marker data match. No cache or graphics fidelity reduction.
+- The prior compact profile reduced the archive from 177,331 to 170,505 B
+  without changing decoded patch pixels or maps. Its texture-zero omission
+  remained present. The corrected compact archive is 170,636 B and adds only
+  `WALL00_3`, while restoring `AASTINKY` as the original texture-zero entry.
+  All other logical patch pixels, map lumps and resolved texture content match.
 - USB GAME/frame capture uses existing pixels/palette and 128 B persistent
   diagnostics state. It releases on disconnect/error/STOP or 15 seconds;
   audio and scanner continue during a brief between-tick game pause.
@@ -79,11 +82,13 @@ blocks and all 160×93 gameplay samples, with detailed HUD in both modes.
   source/config/header hashes match. All 79 engine/7 port sources compile
   for the target and SDK link passes. Final 16-second OPL/synth mixes have
   zero clipping/music errors. Mixed peaks are -12.79/-16.52 dBFS.
-- Host navigation with installed and compacted maps reaches the corridor,
-  opens the first door with one F5 edge, and reaches active enemies. The
-  user's small-area report has no reproduced collision defect. A physical
-  frame capture now shows the spawn room and right-hand opening; capture of
-  the reported stopping location and whole-level traversal remain pending.
+- Host navigation reaches the corridor, opens the first door with one F5
+  edge, and reaches active enemies. A door rendering defect is now reproduced:
+  pruning made `BIGDOOR2` index zero, so rendering skipped a door that BSP
+  clipping correctly treated as solid. The corrected host views show that
+  closed door in both modes without changing geometry. A physical frame
+  capture shows the spawn room and right-hand opening; acceptance at the
+  reported door and whole-level traversal remain pending.
 
 The prior 554,800 B revision `3318678` was flashed, with all 136 changed sectors
 and the complete image readback verified. Cold boot leaves USB requests failing
@@ -108,7 +113,7 @@ One reset completed, but HELLO observation failed; COM10 still enumerates.
 The observation failure latch is preserved. The user subsequently confirms
 audible music but no knob effect and suspects USB is hung. Windows currently
 sees no FM-1 serial port, so fresh diagnostics await reconnection.
-The next candidate passes 72 Python tests and three native USB/sound/volume
+The prior uninstalled CPU/volume candidate passed 72 Python tests and three native USB/sound/volume
 integration contracts, including actual ADC-to-output full/half/zero/restored
 gain and conversion timeout. Scalar diagnostics also return while the mixer
 lock is held. All 79 engine and seven port sources were recompiled for the new
@@ -123,6 +128,37 @@ stack. Emitted status/trace/audio handler frames are 968/944/1,136 B.
 Its installation and physical knob/USB acceptance remain pending. Packaging
 needs a fresh protected writer session from the verified `d2ed…` receipt;
 the previous observation failure latch remains preserved.
+
+### Latest door-fix candidate: not installed
+
+The graphics pruner must preserve the original first `TEXTURE1` entry even
+when its name is unused by E1M1. Removing `AASTINKY` moved `BIGDOOR2` to zero;
+the renderer uses zero as the no-texture sentinel and skipped its wall draw,
+while the unchanged BSP still clipped the closed door as solid. This explains
+the visible opening at a physically closed door. It is a texture-index defect,
+not evidence of an LCD DMA lifetime fault.
+
+Regeneration from the original IWAD retains `AASTINKY` and its `WALL00_3`
+patch closure. The staged WAD is 553,048 B; the private archive
+`audio-door-fixed.fmd` is 170,636 B, SHA-256
+`197d7ccfc475893a6a5b581ea63c51003c524aaa4c38096de370329f2fd2fe7f`.
+Only that patch lump is added; all other logical patch pixels, map lumps and
+resolved texture content match the previous profile. `BIGDOOR2` is now index 1.
+The focused synthetic regression detects the old omission. All 74 Python tests
+pass. Closed-door host captures are opaque in Smooth and Detailed modes; one
+F5 edge changes the first door's ceiling from 0 to 68.
+
+The latest app is 555,248 B, SHA-256
+`238d08700d99dd700e51ea7ef40d7d810f262b5722ab09268a94ad5f75eaee4e`;
+ELF SHA-256 is
+`25f1beabb4d843aad86bdc96797830c9ab89367cb3b8f2e770feee78c88b178b`.
+Static RAM is 477,896 B, linker heap 45,644 B and reviewed startup reserve
+5,120 B. Its USB diagnostic chain remains 1,460 B plus the 1,024 B SDK margin,
+leaving 588 B in the 3,072 B task stack. All 424 frozen source/config/header
+hashes match. The installed `03492fc` image remains unchanged; neither this
+candidate nor the preceding CPU/volume candidate has been flashed. Windows
+sees no FM-1 serial/UBOOT device, and the fresh writer's UAC approval remains
+pending. Physical door, knob, USB and performance acceptance remain open.
 
 ## Historical installed graphics/input milestone
 

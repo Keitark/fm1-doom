@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from stage_wad import (Lump, MAP_LUMPS, compact_assets, omit_direct_boot_ui,
                        patch_columns, pixelate_flat, pixelate_patch,
                        prune_graphics, read_wad, share_patch_columns,
-                       validate_compact_assets, write_wad)
+                       texture_records, validate_compact_assets, write_wad)
 
 
 def patch():
@@ -43,6 +43,62 @@ def complete_fixture():
 
 
 class StageQualityTests(unittest.TestCase):
+    def test_pruning_preserves_zero_texture_sentinel_and_its_patch_closure(self):
+        original = complete_fixture()
+        # Texture zero is unused art, but the renderer also uses its index for
+        # the '-' marker. The first actual door must never inherit that index.
+        definitions = []
+        for name, patches in ((b"DUMMY0", (2, 3)),
+                              (b"BIGDOOR2", (1,)),
+                              (b"SKY1", (4,)),
+                              (b"UNUSED", (0,))):
+            record = struct.pack("<8sIHHIH", name, 0, 4, 4, 0, len(patches))
+            record += b"".join(struct.pack("<hhHhh", 0, 0, index, 0, 0)
+                               for index in patches)
+            definitions.append(record)
+        offset = 4 + 4 * len(definitions)
+        directory = bytearray(struct.pack("<I", len(definitions)))
+        for record in definitions:
+            directory.extend(struct.pack("<I", offset))
+            offset += len(record)
+        directory.extend(b"".join(definitions))
+        patch_names = (b"UNUSEDP", b"DOORPIC", b"SENTP_A", b"SENTP_B", b"WALLPIC")
+        replacements = {
+            b"TEXTURE1": bytes(directory),
+            b"PNAMES": struct.pack("<I", len(patch_names))
+                      + b"".join(struct.pack("<8s", name) for name in patch_names),
+            b"SIDEDEFS": struct.pack("<hh8s8s8sH", 0, 0, b"BIGDOOR2", b"-", b"-", 0),
+        }
+        original = [Lump(l.name, replacements.get(l.name, l.data)) for l in original]
+        patch_end = next(i for i, l in enumerate(original) if l.name == b"P_END")
+        original[patch_end:patch_end] = [Lump(name, patch()) for name in patch_names[:-1]]
+
+        pruned = prune_graphics(original, b"E1M1", True, 1)
+        for result in (pruned, compact_assets(pruned)):
+            with self.subTest(compacted=result is not pruned):
+                by_name = {l.name: l.data for l in result}
+                records = texture_records(by_name[b"TEXTURE1"])
+                names = [record[:8].rstrip(b"\0") for record in records]
+                self.assertEqual(names, [b"DUMMY0", b"BIGDOOR2", b"SKY1"])
+                # p_setup resolves names to indices; r_segs skips texture zero.
+                self.assertGreater(names.index(b"BIGDOOR2"), 0)
+                self.assertEqual(by_name[b"SIDEDEFS"], replacements[b"SIDEDEFS"])
+                pnames = by_name[b"PNAMES"]
+                sentinel_dependencies = [
+                    pnames[4 + index * 8:12 + index * 8].rstrip(b"\0")
+                    for index in (struct.unpack_from("<H", records[0], 26 + i * 10)[0]
+                                  for i in range(2))]
+                self.assertEqual(sentinel_dependencies, [b"SENTP_A", b"SENTP_B"])
+                for name in (b"SENTP_A", b"SENTP_B", b"DOORPIC"):
+                    self.assertEqual(patch_columns(by_name[name]), patch_columns(patch()))
+                self.assertNotIn(b"UNUSEDP", by_name)
+
+    def test_pruning_rejects_empty_texture_table(self):
+        original = [Lump(l.name, struct.pack("<I", 0)) if l.name == b"TEXTURE1" else l
+                    for l in complete_fixture()]
+        with self.assertRaises(ValueError):
+            prune_graphics(original, b"E1M1", True, 1)
+
     def test_original_pistol_and_fist_keep_pixels_while_world_is_coarse(self):
         original = complete_fixture()
         result = prune_graphics(original, b"E1M1", True, 4, weapon_pixelate=1)

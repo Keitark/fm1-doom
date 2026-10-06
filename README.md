@@ -50,8 +50,14 @@ interrupt owner. It polls the PB6 knob from the CPU0 key timer and sends only a
 gain target to the audio callback. These changes pass host contracts; installation
 and physical knob/USB acceptance remain pending. The cause of the USB loss has
 not been confirmed on the device.
-The new app is 555,120 B with 477,896 B static RAM. Its 1,460 B diagnostic
-chain plus 1,024 B SDK margin leaves 588 B in the 3 KiB USB stack.
+The latest candidate also fixes the invisible first door: graphics pruning had
+moved `BIGDOOR2` to texture index zero, which the renderer treats as no texture.
+The corrected archive retains the original texture-zero entry and its patch.
+Closed doors are opaque in both host presentation modes, and F5 opens the first
+door. This fix is not installed on the FM-1 yet.
+The new app is 555,248 B with 477,896 B static RAM. Its 1,460 B diagnostic
+chain plus 1,024 B SDK margin leaves 588 B in the 3 KiB USB stack. All 74 Python
+tests and 424 frozen source/config/header hashes pass the candidate checks.
 USB position/frame diagnostics can inspect the device display with
 `python tools/capture_usb_frame.py --port COM10` once USB responds after boot.
 The private `build/target-candidate/app.bin` is the verified plain input for a
@@ -64,9 +70,10 @@ The current 160×100 direct-E1M1 build has two presentation modes: Smooth uses
 exact 8×8 LCD blocks; Detailed uses all 160×93 gameplay samples. Both fill the
 240×240 display, and the original image menu and compact HUD stay detailed.
 Press D♯4 (the fifth black key from the left) to toggle while playing.
-The audio build uses original pistol art, 2×2 fist art and 4×4 world/enemy assets:
-177,331 B with a 4 KiB decode cache. The graphics/input milestone's full-detail
-fist archive was 181,995 B. Both modes pass 32-bit host gameplay
+The latest audio candidate uses original pistol art, 2×2 fist art and 4×4
+world/enemy assets: 170,636 B with a 4 KiB decode cache, including lossless
+compaction and the texture-zero correction. The graphics/input milestone's
+full-detail fist archive was 181,995 B. Both modes pass 32-bit host gameplay
 checks at a 296 KiB Doom zone. Whole-texture caches now use a bounded column
 buffer, preventing the reproduced fragmented-zone allocation failure. Runtime
 stack/heap and whole-level hardware acceptance remain open. See the
@@ -141,9 +148,12 @@ python tools/pack_archive.py build\stage-menu-ui.wad build\menu-ui-4k.fmd --bloc
 This retains original menu images and pistol art while reducing the four fist
 frames to leave room for audio. Lossless patch-column/payload sharing and
 texture patch-index compaction preserve decoded graphics and all map lumps.
-The resulting WAD is 552,294 B and its 4 KiB FMD1 archive is 170,505 B on the
-tested input. Without `--compact-assets`, the prior 582,735 B/177,331 B profile
-is reproduced.
+Regenerate from the original IWAD with the corrected stage tool: an earlier
+pruned archive has already lost `AASTINKY` and its `WALL00_3` patch. The original
+texture-zero entry must remain even though E1M1 does not reference its name, so
+`BIGDOOR2` keeps a nonzero index. The resulting WAD is 553,048 B and its 4 KiB
+FMD1 archive is 170,636 B on the tested input. Earlier profile sizes recorded
+in the deployment history predate this correction.
 Generate the separate sound/music banks with the commands in [AUDIO.md](AUDIO.md)
 before building the audio target. The zero-length music marker remains in the
 WAD; playback uses the separate immutable score.
@@ -207,7 +217,7 @@ working after the scanner fix; whole-level input acceptance remains open.
 ## Limits of the UBOOT input
 
 The reviewed V14/v32 app slot is 584,956 B. The current E1M1 audio candidate,
-including its compressed archive and audio banks, is 555,120 B, leaving 29,836 B.
+including its compressed archive and audio banks, is 555,248 B, leaving 29,708 B.
 It includes a fixed 296 KiB Doom zone, 4 KiB archive cache and 7 KiB bounded
 inflater arena. Static RAM is 477,896 B, leaving a 45,644 B linked heap span.
 Reviewed startup uses 37,464 B for tasks/queues/idle, an 800 B initialization

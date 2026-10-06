@@ -198,7 +198,7 @@ def prune_graphics(lumps: list[Lump], map_name: bytes, sprites: bool,
 
     texture_data = by_name[b"TEXTURE1"].data
     texture_count = struct.unpack_from("<I", texture_data)[0]
-    if texture_count > 10000 or len(texture_data) < 4 + 4 * texture_count:
+    if not 0 < texture_count <= 10000 or len(texture_data) < 4 + 4 * texture_count:
         raise ValueError("invalid TEXTURE1 directory")
     texture_records = []
     for offset in struct.unpack_from("<" + "I" * texture_count, texture_data, 4):
@@ -210,6 +210,12 @@ def prune_graphics(lumps: list[Lump], map_name: bytes, sprites: bool,
             raise ValueError("texture patches exceed TEXTURE1")
         name = texture_data[offset:offset + 8].split(b"\0", 1)[0]
         texture_records.append((name, texture_data[offset:end]))
+
+    # Doom uses texture index zero for an absent sidedef texture. Keep the
+    # original unused first entry (AASTINKY in Doom shareware), so pruning
+    # cannot turn a real wall/door texture into the no-texture sentinel.
+    # Its patch dependencies are retained by the normal closure below.
+    wall_names.add(texture_records[0][0])
 
     # Episode-one switch pairs are eagerly resolved by P_InitSwitchList.
     wall_names.update(name for name, _ in texture_records if name.startswith((b"SW1", b"SW2")))

@@ -25,9 +25,11 @@ returns 1 KiB to the runtime heap and adds an explicit `heap_free` query.
 Its full flash readback matches, but HELLO fails after one reset while COM10
 enumerated. The user subsequently confirms audible music, but the knob has no
 effect and USB appears unresponsive. Windows currently sees no FM-1 port;
-fresh diagnostics await reconnection. The next CPU/volume candidate is not
-installed, and the reported map restriction still requires a capture at the
-stopping location.
+fresh diagnostics await reconnection. The latest CPU/volume and door-fix
+candidate is not installed. Host reproduction identifies the transparent
+first door as a graphics-pruning texture-zero defect; corrected host captures
+show an opaque closed door in both views. Physical acceptance at that location
+still requires installation and a device check.
 
 ## Graphics/input milestone artifacts
 
@@ -250,7 +252,7 @@ Receipts in the fresh session above:
 - Reset: `runs/b64ebe282c1d4c1da83fe4c2c7511e28`.
 - Failed observation: `runs/b2fa6288b2d249b1904db8939ac422c0`.
 
-## Next CPU/volume candidate: not installed
+## Prior CPU/volume candidate: not installed
 
 Doom and USB tasks are bound to CPU0 with the SDK's `#C0` notation. ALINK is
 routed only to CPU1 at interrupt priority 3, with CPU0's route masked and
@@ -280,3 +282,39 @@ No new device write has occurred. Reconnection, physical UBOOT entry and a
 fresh protected writer session are pending. That session will use the verified
 `d2ed…` readback receipt as its baseline; the old observation failure latch
 remains intact. Installation and physical knob/USB acceptance remain open.
+
+## Latest door-fix candidate: not installed
+
+Graphics pruning removed the original `AASTINKY` texture-zero entry and made
+`BIGDOOR2` index zero. The renderer treats zero as no texture, so the door was
+skipped while BSP clipping still treated it as a solid closed door. The stage
+tool now retains that original entry and its `WALL00_3` patch closure. The
+archive is regenerated from the original IWAD; an already-pruned archive
+cannot restore the missing entry and patch.
+
+Exactly one patch lump is added. All other logical patch pixels, map lumps and
+resolved texture content remain unchanged; `BIGDOOR2` is now index 1. The
+synthetic regression fails with the old pruner, and all 74 Python tests pass.
+Host screenshots show an opaque closed door in both Smooth and Detailed modes;
+one F5 edge changes its ceiling height from 0 to 68. These are host results,
+not physical display or whole-level acceptance.
+
+| Candidate item | Value |
+| --- | --- |
+| Private staged WAD / FMD1 archive | 553,048 B / 170,636 B |
+| Archive SHA-256 | `197d7ccfc475893a6a5b581ea63c51003c524aaa4c38096de370329f2fd2fe7f` |
+| Plain `app.bin` | 555,248 B; 29,708 B below the reviewed slot limit |
+| App SHA-256 | `238d08700d99dd700e51ea7ef40d7d810f262b5722ab09268a94ad5f75eaee4e` |
+| ELF SHA-256 | `25f1beabb4d843aad86bdc96797830c9ab89367cb3b8f2e770feee78c88b178b` |
+| Static RAM / linker heap | 477,896 B / 45,644 B |
+| Reviewed task minimum / startup reserve | 37,464 B / 5,120 B before other allocations/padding |
+| USB task / diagnostic chain / SDK margin | 3,072 B / 1,460 B / 1,024 B; 588 B remaining |
+| Frozen source/config/header hashes | 424; all match |
+
+The CPU0 task binding, CPU1 ALINK owner and separate CPU0 volume polling from
+the preceding candidate are retained. The installed `03492fc` image and its
+verified `d2ed…` readback receipt remain unchanged. Neither candidate has been
+flashed. Windows currently exposes no FM-1 serial/UBOOT device, and the fresh
+protected writer's UAC approval remains pending. There is no new deployment,
+reset or readback receipt. Physical door, knob and USB acceptance and the
+requested 30 FPS remain open.
