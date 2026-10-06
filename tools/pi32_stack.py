@@ -97,7 +97,7 @@ def inspect_text(symbol_text, disassembly):
     selected = ("fm1_doom_usb_task", "command", "fm1_doom_usb_protocol_feed",
                 "fm1_doom_usb_protocol_status", "fm1_doom_usb_protocol_trace",
                 "fm1_doom_usb_protocol_audio", "fm1_doom_usb_protocol_volume", "fm1_doom_usb_protocol_usb_audio", "game_status", "frame_info", "frame_read",
-                "fm1_usb_audio_target_status",
+                "edit_status", "fm1_usb_audio_target_status",
                 "get_status", "get_game", "snprintf", "vsnprintf", "decimal", "repeat", "string",
                 "audio_isr", "iis_irq_handler", "output", "scan_isr", "timer1_isr", "timer4_isr", "usb0_g_isr", "fm1_usb_rx_irq",
                 "fm1_doom_sound_get_volume_hardware", "fm1_doom_usb_get_volume", "get_volume", "volume_take", "volume_release")
@@ -140,7 +140,7 @@ def usb_diagnostic_budget(report, stack_bytes):
         raise ValueError("USB command stack boundary is missing or ambiguous after LTO")
     dispatcher = frames[dispatch[0]]
     required = ("fm1_doom_usb_protocol_status", "fm1_doom_usb_protocol_trace",
-                "fm1_doom_usb_protocol_audio", "fm1_doom_usb_protocol_volume", "fm1_doom_usb_protocol_usb_audio", "game_status", "frame_info", "frame_read")
+                "fm1_doom_usb_protocol_audio", "fm1_doom_usb_protocol_volume", "fm1_doom_usb_protocol_usb_audio", "game_status", "frame_info", "frame_read", "edit_status")
     handlers = []
     for base in required:
         candidates = [name for name in dispatcher["direct_calls"] if name in frames

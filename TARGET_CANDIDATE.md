@@ -1,5 +1,36 @@
 # FM-1 Doom UBOOT `app.bin` input
 
+## Current source revision (2026-10-07)
+
+The source retains E1M1 and current 4×4 world/enemy assets. Gameplay always
+uses the detailed 160×93 view; the 8×8 LCD presentation toggle is removed.
+Live encoder editing controls synth presets/algorithm, VCO detune, VCF cutoff,
+VCA contour and reverb. Original OPL remains the boot default. The fixed
+296 KiB allocation is partitioned into a 294 KiB Doom zone and a 2 KiB synth
+delay; the 4 KiB archive cache is unchanged. This source revision has not
+been flashed. Dated build/bench values below describe their named checkpoints.
+
+### Offline live-editor artifact
+
+| Gate | Result |
+| --- | --- |
+| Plain UBOOT input | `build/target-candidate/app.bin`, 565,744 B |
+| App SHA-256 | `70553874c1d8dd2e89e1448d27fbf89b1d5476b8573f3a9cb1e89fa46cfd3d35` |
+| ELF SHA-256 | `56b7036a6d5f175e5dd519dbdf1243e20b96444170ecc45d14a5732a0f33f126` |
+| App slot / remaining | 584,956 B / 19,212 B |
+| Static RAM: data + BSS | 26,928 + 452,232 = 479,160 B |
+| Linker heap / reviewed startup reserve | 44,396 B / 4,384 B |
+| Required startup reserve | 4,096 B |
+| USB stack / diagnostic chain / SDK margin | 2,560 / 1,476 / 1,024 B; 60 B remaining |
+| Native contracts | 13/13 pass, including live controls and exact OPL reference |
+| Engine memory smoke | 1,200-tick Win32 route at 294 KiB crosses first door and reaches enemies; 600 moving/firing ticks and menu open/restart/resume pass |
+
+The manifest records source/dependency hashes, private bank/archive hashes,
+emitted stack frames and unchanged reviewed app layout. Original game data,
+banks and firmware remain private ignored build outputs. Passing these gates
+establishes an offline UBOOT input; it does not establish physical boot,
+live knob direction, DSP deadlines, runtime high-water marks or 30 FPS.
+
 The current low-memory E1M1 build has a real FM-1 SDK `app_main`. It creates a
 separate Doom and USB tasks so SDK event dispatch and diagnostics continue. The task validates a local
 FMD1 archive linked in XIP flash, initializes the recovered stock LCD sequence,
@@ -14,14 +45,15 @@ transfer failures, record a bounded RAM message and stop LCD/scanner/audio;
 USB status and serial UBOOT remain available. Audio initialization failure is
 nonfatal to rendering and is reported separately. The earlier `fc03a11` build
 was audible; the `58b9ac4` USB repair reported an IIS initialization failure.
-The installed `8a36a90` CPU/interrupt and door correction passed complete
-readback and serial boot observation. The knob remains unresponsive and audio
-callbacks exceed their budget. The next candidate adds exact OPL optimizations,
-read-only ADC register diagnostics and capture-only USB audio. The first UAC
-image enumerated after UBOOT reset but failed IIS initialization; USB was absent
-after the user's reset while Doom remained visible. The replacement restores
-memory headroom and boots with ADC-controlled gain. USB capture is before
-master gain. See [current bench evidence](PORT_STATUS.md).
+The historical `8a36a90` CPU/interrupt and door correction passed complete
+readback and serial boot observation. The `60827f7` replacement restored IIS
+startup and produced a real USB recording, but ADC control and audio timing
+failed. A subsequent early-ADC image also failed physical knob control.
+Configuring IIS and ADC before LCD/scanner setup, with polling during LCD
+initialization, restored live and physically confirmed volume control.
+Seven inlined OPL helpers improved production to about42,930 frames/s;
+the latest candidate also skips silent operators while preserving reference PCM.
+USB capture is before master gain. See [current bench evidence](PORT_STATUS.md).
 
 The first-stage game contains E1M1 only. Its original image menu offers New
 Game and graphic detail; completing E1M1 starts E1M1 again rather than entering
@@ -77,6 +109,74 @@ The builder sets `flashable: true` for this UBOOT **input format** and
 is recorded below. The generated file includes derived game
 data and is ignored by Git; keep it private. Check its size and SHA-256
 against the manifest before loading it in your UBOOT program.
+
+## Current private-buffer and USB diagnostic candidate, 2026-10-07
+
+The installed plain application is563,440 B, SHA-256
+`ce8176d84946623efc296434973dbabc75c094edd3b7a8cb8ea29fbc39762ab3`.
+ELF SHA-256 is
+`a07105f20eef7596f407ecfb308475c64fba0e8af426ce6efbcab5b2121758df`.
+Static RAM is479,000 B and linker heap is44,556 B. The reviewed startup
+reserve is4,544 B, above the4,096 B required reserve; the USB task stack
+remains2,560 B. Application slot headroom is21,516 B. Private assets are
+unchanged.
+
+Audio renders to a512 B private block, records the pre-master USB tap there,
+applies the shared physical master envelope, then copies the completed block
+to the SDK DMA half and issues `csync`. Low-gain and muted regressions fail
+before this change and pass afterward. All12 native contracts pass, including
+the exact complete-loop OPL reference. `update_noise` is now inlined along
+with the seven earlier hot helpers, preserving arithmetic and state order.
+The final copy still has the64-frame deadline; this change does not guarantee
+that synthesis finishes within1.451 ms.
+
+The optional F4 boot screen adds60 B of read-only USB clock/controller
+snapshots. Hold F4 (eighth white piano key from the left) at power-on to show
+stage/error/heartbeat and before/after registers for30 seconds; normal Doom
+then starts. No clock or PHY register correction is applied by this screen.
+
+The encoded image
+`2a432d0f469a21169a5cbe638fb2c5f95e9be493845eadd2eda0cd92951a6a1b`
+passed138-sector writing, directory last, and complete1 MiB readback.
+Warm reset and COM4 serial observation passed at stage4/fault0, frames109→142,
+with zero LCD/key errors. The user reports much improved, almost-perfect
+speaker playback. USB still disappears after cold boot; the subsequent audio
+capture could not open the absent COM4. Cold-boot USB, remaining speaker
+glitches and physical output timing remain open.
+
+## Previous IIS-first and monitor candidate, 2026-10-06
+
+The previous plain application is 561,520 B, SHA-256
+`6150df022dd98f525ea8fa59fa67020a4d0a9f62331be79a3d123ddd9cf15c7f`.
+ELF SHA-256 is
+`9062dd24c9896cb6f3b171518f8b940984e8e05cdee6182a0f3e26b08e0d6d17`.
+Static RAM is 478,424 B and linker heap remains 45,132 B, with the
+reviewed 5,120 B startup reserve and a 2,560 B USB task stack. The private
+graphics/effect/music/GENMIDI assets are unchanged. All 12 native contracts
+pass, including real-driver IIS/ADC ordering and exact OPL PCM comparisons.
+The linked image has no calls or definitions for the seven inlined OPL helpers.
+
+The prepared encoded image is
+`71d2cc0d86965ac4ad146ba7493ec2eca2e43a1d82cf12f5236c441753bcf461`;
+138 application/directory sectors change, directory last. Offline source,
+CRC, protected-range and write/restore checks pass. This is separate from
+physical knob control, callback-rate and sound-quality acceptance.
+
+This build adds bounded15-second drum/melody/music-pause listening diagnostics.
+Drums are original OPL GENMIDI instruments; the independent PCM bank contains
+game effects. Percussion ownership is saved with each native chip output so
+the first stem/crossfade sample is aligned. The complete original OPL reference
+still matches37,784 register writes and4,233,600 PCM frames exactly.
+The preceding8d7fc70d image passed readback/boot and a19.997-second actual USB
+recording; its43,086.91 frames/s production and remaining speaker noise are
+documented in [AUDIO.md](AUDIO.md). Normal cold-boot USB is unresolved.
+
+The preceding 561,328 B application `909c0188...` was written and readback
+verified as image `ac0af0b6...`, then booted at stage4 with zero faults/LCD/key
+errors. A25.485-second OPL-mode sweep measured ADC0..1023, gain0..127/errors0,
+and670.787 audio IRQ/s (42,930.35 stereo frames/s). The user confirms physical
+music volume control; remaining noise is audible during music, particularly
+at low master volume. This does not establish the latest candidate's deadline.
 
 ## Historical installed audio allocation revision
 

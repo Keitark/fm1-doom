@@ -27,6 +27,16 @@
 #endif
 #endif
 
+/* These operator helpers run for every native OPL sample. Keep their
+ * arithmetic in the caller even when the firmware is built for size. */
+#if defined(_MSC_VER)
+#define OPL_HOT_INLINE __forceinline
+#elif defined(__GNUC__)
+#define OPL_HOT_INLINE INLINE __attribute__((always_inline))
+#else
+#define OPL_HOT_INLINE INLINE
+#endif
+
 #define _PI_ 3.14159265358979323846264338327950288
 
 /* dynamic range of envelope output */
@@ -761,7 +771,7 @@ static INLINE void update_ampm(OPL *opl) {
     opl->lfo_am = am_table[opl->am_phase_index] >> (opl->am_mode ? 0 : 2);
 #endif
 }
-static void update_noise(OPL *opl, int cycle) {
+static OPL_HOT_INLINE void update_noise(OPL *opl, int cycle) {
 #if !EMU8950_SIMPLER_NOISE
     uint32_t noise = opl->noise;
     /* This Galois LFSR injects feedback into bits8 and22 after shifting.
@@ -917,7 +927,7 @@ static void update_slots(OPL *opl) {
 
 #endif
 /* input: 0..8191 output: -4095..4095 */
-static int16_t lookup_exp_table(int16_t i) {
+static OPL_HOT_INLINE int16_t lookup_exp_table(int16_t i) {
     /* from andete's expressoin */
     int16_t t = (exp_table[(i & 0xffu)] + 1024);
     int16_t res = t >> ((i & 0x7f00) >> 8);
@@ -928,7 +938,7 @@ static int16_t lookup_exp_table(int16_t i) {
 #endif
 }
 
-static INLINE int16_t to_linear(uint16_t h, OPL_SLOT *slot, int16_t am) {
+static OPL_HOT_INLINE int16_t to_linear(uint16_t h, OPL_SLOT *slot, int16_t am) {
     uint16_t att;
     if (slot->eg_out >= EG_MAX) {
         return 0;
@@ -942,7 +952,7 @@ static INLINE int16_t to_linear(uint16_t h, OPL_SLOT *slot, int16_t am) {
 #define LOGSIN_MASK2 (PG_WIDTH/2 - 1)
 
 //static INLINE uint16_t get_wave_table(OPL_SLOT *slot, uint32_t index) {
-static uint16_t get_wave_table(OPL_SLOT *slot, uint32_t index) {
+static OPL_HOT_INLINE uint16_t get_wave_table(OPL_SLOT *slot, uint32_t index) {
 #if !EMU8950_NO_WAVE_TABLE_MAP
     return slot->wave_table[index];
 #else
@@ -977,7 +987,7 @@ static uint16_t get_wave_table(OPL_SLOT *slot, uint32_t index) {
 #endif
 }
 
-static INLINE uint16_t get_wave_table_wrap(OPL_SLOT *slot, uint32_t index) {
+static OPL_HOT_INLINE uint16_t get_wave_table_wrap(OPL_SLOT *slot, uint32_t index) {
 #if !EMU8950_NO_WAVE_TABLE_MAP
     return get_wave_table(slot, index & (PG_WIDTH - 1));
 #else
@@ -985,24 +995,36 @@ static INLINE uint16_t get_wave_table_wrap(OPL_SLOT *slot, uint32_t index) {
 #endif
 }
 
-static INLINE int16_t calc_slot_car(OPL *opl, int ch, int16_t fm) {
+static OPL_HOT_INLINE int16_t calc_slot_car(OPL *opl, int ch, int16_t fm) {
     OPL_SLOT *slot = CAR(opl, ch);
-
-    uint8_t am = slot->patch->AM ? opl->lfo_am : 0;
+    uint8_t am;
 
     slot->output[1] = slot->output[0];
+    /* to_linear returns zero at this threshold for every waveform/AM. */
+    if (slot->eg_out >= EG_MAX) {
+        slot->output[0] = 0;
+        return 0;
+    }
+    am = slot->patch->AM ? opl->lfo_am : 0;
     slot->output[0] = to_linear(get_wave_table_wrap(slot, slot->pg_out + 2 * (fm >> 1)), slot, am);
 
     return slot->output[0];
 }
 
-static INLINE int16_t calc_slot_mod(OPL *opl, int ch) {
+static OPL_HOT_INLINE int16_t calc_slot_mod(OPL *opl, int ch) {
     OPL_SLOT *slot = MOD(opl, ch);
-
-    int16_t fm = slot->patch->FB > 0 ? (slot->output[1] + slot->output[0]) >> (9 - slot->patch->FB) : 0;
-    uint8_t am = slot->patch->AM ? opl->lfo_am : 0;
+    /* Feedback uses both outputs from before the history shift. */
+    int32_t previous_output = slot->output[1];
+    int16_t fm;
+    uint8_t am;
 
     slot->output[1] = slot->output[0];
+    if (slot->eg_out >= EG_MAX) {
+        slot->output[0] = 0;
+        return 0;
+    }
+    fm = slot->patch->FB > 0 ? (previous_output + slot->output[0]) >> (9 - slot->patch->FB) : 0;
+    am = slot->patch->AM ? opl->lfo_am : 0;
     slot->output[0] = to_linear(get_wave_table_wrap(slot, slot->pg_out + fm), slot, am);
 
     return slot->output[0];
@@ -1057,7 +1079,7 @@ static INLINE int16_t calc_slot_hat(OPL *opl) {
 #define _MO(x) (-(x) >> 1)
 #define _RO(x) (x)
 
-static INLINE int16_t calc_fm(OPL *opl, int ch) {
+static OPL_HOT_INLINE int16_t calc_fm(OPL *opl, int ch) {
     if (opl->ch_alg[ch]) {
         return calc_slot_car(opl, ch, 0) + calc_slot_mod(opl, ch);
     }

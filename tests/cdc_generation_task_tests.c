@@ -23,6 +23,7 @@ static unsigned diagnostics, burst, received_length;
 static const char *diagnostic_command;
 static char expected_reply[512], received_reply[512];
 static size_t expected_length;
+static unsigned startup_waits;
 
 /* Include rather than clone the task, making queue state observable to the
  * fake scheduler without adding hooks or storage to firmware. */
@@ -94,7 +95,13 @@ void usb_write_txcsr(usb_dev id, unsigned ep, unsigned value)
 int fm1_cdc_ready(usb_dev id)
 { CHECK(!id); return (handle.bmTransceiver & 17u) == 17u; }
 int usb_device_mode(usb_dev id, unsigned classes)
-{ CHECK(!id && classes == CDC_CLASS); return 0; }
+{ CHECK(!id && classes == CDC_CLASS && startup_waits == 3); return 0; }
+int fm1_doom_usb_board_ready(void) { return startup_waits == 3; }
+void fm1_doom_usb_debug_snapshot(unsigned phase)
+{ CHECK(startup_waits == 3 && phase <= 1); }
+void fm1_doom_music_set_monitor(unsigned mode) { (void)mode; CHECK(0); }
+unsigned fm1_doom_sound_lock(void) { CHECK(0); return 0; }
+void fm1_doom_sound_unlock(unsigned flags) { (void)flags; CHECK(0); }
 uint32_t timer_get_ms(void) { return iteration * 10u; }
 u32 cdc_read_data(usb_dev id, u8 *out, u32 capacity)
 {
@@ -171,6 +178,11 @@ void fm1_doom_usb_get_volume(struct fm1_doom_usb_volume *volume)
 void os_time_dly(unsigned ticks)
 {
     unsigned i;
+    if (startup_waits < 3) {
+        CHECK(ticks == 1 && fm1_doom_usb_stage == 1 && !iteration);
+        ++startup_waits;
+        return;
+    }
     CHECK(ticks == 1 && irq_enabled && !irq_depth && fm1_cdc_ready(0));
     if (diagnostics) {
         CHECK(tx_write == expected_length && tx_read <= tx_write);

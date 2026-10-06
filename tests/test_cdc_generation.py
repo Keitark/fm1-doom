@@ -50,6 +50,8 @@ int fm1_usb_rx_fault(void);
 int fm1_usb_boot_pending(void);
 int fm1_usb_boot_arm(void);
 void fm1_doom_sound_set_speaker_muted(unsigned);
+unsigned fm1_doom_sound_lock(void);
+void fm1_doom_sound_unlock(unsigned);
 #endif
 """, encoding="utf-8")
             for name in ("app_config.h", "system/includes.h", "system/sys_time.h", "os/os_api.h",

@@ -1,6 +1,43 @@
-# FM-1 Doom deployment, 2026-10-05–06
+# FM-1 Doom deployment, 2026-10-05–07
 
 ## Current result
+
+The source now removes the 8×8 presentation mode and adds live synth controls.
+That revision has not been flashed. The installed application remains the
+563,536 B `3cf7f681...` checkpoint described below. New artifact sizes and
+offline checks are recorded in [TARGET_CANDIDATE.md](TARGET_CANDIDATE.md).
+
+The user identified the connected programmer cable as the cause on 2026-10-07.
+Switching to a normal USB data cable following the normal-boot check restored
+the connection; the existing firmware exposes
+healthy COM5 and a UAC recording endpoint. HELLO identifies DOOM-FM1/1;
+stage4/fault0, frames1375->1409 and LCD/key errors0. No additional firmware
+was flashed. The earlier missing-USB observations do not establish a Doom
+cold-startup defect. See [USB_COLD_BOOT_AUDIT.md](USB_COLD_BOOT_AUDIT.md).
+
+Installed application `3cf7f681...` (563,536 B) changes startup to create the peripheral
+worker first, following public NES, and explicitly waits for IIS/ADC
+initialization before USB attachment. Early game/audio failures still release
+the USB worker for recovery. The causal role of that startup-order change
+remains unconfirmed. Native contracts (12/12) and the
+production USB task waiting/cancellation regression pass. Linker heap remains
+44,556 B and reviewed startup reserve 4,544 B. The user accepts PCM and master
+volume. Its startup-order change has not been established as a necessary fix.
+
+At the earlier cable-dependent checkpoint, the 138-sector update passed complete readback, image SHA-256
+`af92a30b658ee2f878c9b410ee53bf50391af9e3f3d86470500ada01de12f1f9`.
+UBOOT reset exposes COM4 and the UAC recording endpoint. Serial observation
+reaches stage4/fault0, frames123->157, LCD/key errors0. The user's subsequent
+cold power cycle FAILED: Windows again exposes neither FM-1 serial nor UAC.
+Startup ordering did not resolve that observation. The later cable finding
+above supersedes this investigation. The live-editor changes remain offline.
+
+The previous `ce8176d8...` application was installed with a matching complete
+flash readback and successful warm serial boot. Audio now renders and applies
+master volume in private memory before publishing a completed DMA block; the
+user reports much improved, almost-perfect speaker playback. Cold-boot USB
+still disappears, and remaining sound/timing acceptance is open. The installed
+F4 startup screen makes USB register/status diagnostics available on the LCD.
 
 The original engine reaches running stage 4 on the FM-1. The user confirms
 that Doom gameplay is visible. Serial diagnostics report zero engine, LCD and
@@ -15,21 +52,38 @@ frame-counter increments per second. Instrument quality and mix balance are
 being checked. The requested 30 FPS target is not met; this is not a
 distinct-frame benchmark or a full E1M1 traversal.
 
-The newer `3318678` OPL/synth/knob build was installed and readback-verified,
+The historical `3318678` OPL/synth/knob build was installed and readback-verified,
 but the user reports no audio and restricted movement near spawn after cold
 boot. COM6 enumerates but requests time out. A compiled USB task stack overflow
 was confirmed. The flashed `58b9ac4` repair restored USB stage 4 and frame
 capture, but audio reported an IIS initialization failure (`ready=0`,
 `error=-1`, `irqs=0`, `volume_valid=0`). The installed `03492fc` allocation fix
 returns 1 KiB to the runtime heap and adds an explicit `heap_free` query.
-Its full flash readback matches, but HELLO fails after one reset while COM10
-enumerated. The user subsequently confirms audible music, but the knob has no
-effect and USB appears unresponsive. Windows currently sees no FM-1 port;
-fresh diagnostics await reconnection. The latest CPU/volume and door-fix
-candidate is not installed. Host reproduction identifies the transparent
-first door as a graphics-pruning texture-zero defect; corrected host captures
-show an opaque closed door in both views. Physical acceptance at that location
-still requires installation and a device check.
+Its full flash readback matched, but HELLO failed after one reset while COM10
+enumerated. Later CPU/interrupt and door corrections restored serial boot and
+frame capture; game snapshots show exploration beyond the corrected first
+door. Full-map and physical door acceptance remain open.
+
+On 2026-10-06, `60827f7` passed full readback and serial boot on COM4. IIS was
+ready with 4,244 B live heap, and native 44.1 kHz stereo PCM16 USB capture was
+recorded for 19.779 seconds. ADC stayed zero during a confirmed knob sweep,
+and the producer delivered only about 33,454 frames/s. A controlled retained
+NES reference then responded to the physical knob with ADC0..1023/errors0.
+The next early-ADC Doom image (`f328adbc...`) booted but read nearly constant
+221..222; the user confirmed it still failed. Image `ac0af0b6...` then passed
+full readback and boot: IIS-first/ADC-before-LCD startup with early polling
+restored ADC0..1023 and gain0..127, and the user confirms music volume control.
+OPL production improved to about42,930 frames/s; the low-volume noise and
+full-rate deadline remain open. The silent-operator image `50d6ee10...` passed
+full readback and boot and recorded19.997 seconds of actual USB music with no
+active PCM effects. Production measured43,086.91 frames/s; paused rendering
+measured43,204.38, leaving the actual clock versus missed-IRQ cause unverified.
+The user reports absent USB after a normal boot while Doom remains visible.
+The newest compiled monitor build is described in
+[TARGET_CANDIDATE.md](TARGET_CANDIDATE.md); its physical results are recorded
+below when available.
+See [PORT_STATUS.md](PORT_STATUS.md) for the current bench result and remaining
+volume, timing and sound-quality gates.
 
 ## Graphics/input milestone artifacts
 
@@ -252,7 +306,7 @@ Receipts in the fresh session above:
 - Reset: `runs/b64ebe282c1d4c1da83fe4c2c7511e28`.
 - Failed observation: `runs/b2fa6288b2d249b1904db8939ac422c0`.
 
-## Prior CPU/volume candidate: not installed
+## Historical CPU/volume candidate before installation
 
 Doom and USB tasks are bound to CPU0 with the SDK's `#C0` notation. ALINK is
 routed only to CPU1 at interrupt priority 3, with CPU0's route masked and
@@ -283,7 +337,7 @@ fresh protected writer session are pending. That session will use the verified
 `d2ed…` readback receipt as its baseline; the old observation failure latch
 remains intact. Installation and physical knob/USB acceptance remain open.
 
-## Latest door-fix candidate: not installed
+## Historical door-fix candidate before installation
 
 Graphics pruning removed the original `AASTINKY` texture-zero entry and made
 `BIGDOOR2` index zero. The renderer treats zero as no texture, so the door was
@@ -318,3 +372,47 @@ flashed. Windows currently exposes no FM-1 serial/UBOOT device, and the fresh
 protected writer's UAC approval remains pending. There is no new deployment,
 reset or readback receipt. Physical door, knob and USB acceptance and the
 requested 30 FPS remain open.
+
+## Private audio buffer deployment, 2026-10-07
+
+| Item | Value |
+| --- | --- |
+| Plain `app.bin` | 563,440 B |
+| App SHA-256 | `ce8176d84946623efc296434973dbabc75c094edd3b7a8cb8ea29fbc39762ab3` |
+| ELF SHA-256 | `a07105f20eef7596f407ecfb308475c64fba0e8af426ce6efbcab5b2121758df` |
+| Verified full image | `2a432d0f469a21169a5cbe638fb2c5f95e9be493845eadd2eda0cd92951a6a1b` |
+| Static RAM / linker heap | 479,000 B / 44,556 B |
+| Reviewed startup reserve | 4,544 B, before other allocation padding |
+
+The callback now renders into a private 512 B block, applies the master
+envelope there, and publishes the finished block with `memcpy` and `csync`.
+USB still records the pre-master mix. Regressions prove that the live DAC
+buffer remains unchanged through all 64 sample-generation calls at low gain
+and mute. All 12 native contracts pass; target source closure, slot, RAM,
+startup budget and USB stack gates pass. Inlining `update_noise` preserves
+the independent reference PCM and register sequence.
+
+The existing protected writer changed 138 sectors, directory last, and the
+complete 1 MiB readback matched. A single warm reset then produced COM4,
+`DOOM-FM1/1`, stage 4/fault 0, frames 109→142 and zero LCD/key errors.
+The user reports the speaker is much improved and almost perfect. Remaining
+glitches are not yet accepted as resolved.
+
+COM4 was absent when the subsequent UAC recording attempted to open it, so
+that attempt produced no new device audio. Windows also exposed no FM-1
+serial/UAC/UBOOT device. The user reports that cold-boot USB still disappears.
+The new optional F4 LCD startup screen is installed; its physical register
+photo is pending. This deployment does not establish a cold-boot USB fix or
+sustained DMA deadline compliance.
+
+Receipts in protected session `FM1FlashSession-391bc34ea6334e74ae5ecd2b9e359d38`:
+
+- Write/full readback: `runs/9f0beb1c909140e2afe777bd4ad725b6`.
+- Reset: `runs/55aea7d4083f444dba015383ddfdfdf7`.
+- Warm serial observation: `runs/01aa99100ff7416d9170c898d9d7a012`.
+
+The previous `6150df02...` monitor build also passed full readback and warm
+boot. Its cheap PAUSE interval stopped both engine work and MUS/OPL generation
+and delivered about 44.1 kHz, with no new capture underflows/overflows/silent
+frames in that interval. That result disfavors the earlier fixed-clock
+hypothesis; it does not isolate synthesis from other runtime load.

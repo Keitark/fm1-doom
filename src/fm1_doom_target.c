@@ -23,8 +23,11 @@
 #include "fm1_doom_target_io.h"
 #include "fm1_doom_wad_file.h"
 #include "fm1_doom_usb.h"
+#include "fm1_doom_usb_debug.h"
 #include "fm1_doom_sound.h"
 #include "fm1_doom_music.h"
+#include "fm1_doom_edit.h"
+#include "peripheral_logic.h"
 #include "doomgeneric.h"
 #include "doomstat.h"
 #include "i_video.h"
@@ -62,6 +65,10 @@ static fm1_doom_usb_frame_control frame_capture;
 static struct fm1_doom_usb_game game_snapshot = {.state = -1, .skill = -1, .sector = -1};
 static int map_things;
 static fm1_wl82_keyscan scanner;
+static fm1_encoders encoders;
+static uint32_t encoder_sequence;
+static fm1_doom_edit sound_edit;
+static volatile uint32_t edit_snapshot = 16u | (72u << 7) | (32u << 14);
 static spinlock_t input_lock;
 static unsigned input_irq_enabled, input_irq_registered, input_retries;
 static int scan_timer;
@@ -110,8 +117,8 @@ void fm1_doom_usb_get_status(struct fm1_doom_usb_status *status)
     status->scan_failure_row = scanner.failure.row;
     status->scan_failure_con = scanner.failure.con;
     status->scan_failure_dma_count = scanner.failure.dma_count;
-    status->coarse_gameplay = fm1_doom_active_port()
-        ? fm1_doom_active_port()->coarse_gameplay : 0;
+    status->coarse_gameplay = 0; /* Retained wire field: detailed presentation only. */
+    status->edit_controls = edit_snapshot;
     /* Best-effort scalar telemetry must never wait for the CPU1 renderer.
      * These getters do no traversal, allocation or peripheral access. */
     fm1_doom_sound_get_diagnostics(&sound);
@@ -250,7 +257,7 @@ static void update_game_snapshot(void)
     game.things = map_things; game.vertexes = numvertexes;
     game.lines = numlines; game.sides = numsides; game.sectors = numsectors;
     game.segs = numsegs; game.subsectors = numsubsectors; game.nodes = numnodes;
-    if (port) { game.menu = port->menu_visible; game.coarse = port->coarse_gameplay; }
+    if (port) game.menu = port->menu_visible;
     flags = frame_take();
     game_snapshot = game;
     frame_release(flags);
@@ -333,7 +340,10 @@ static void scan_tick(void *unused)
     if (!(trace_scan_kicks & 1u)) fm1_doom_sound_volume_tick();
     flags = input_take();
     (void)unused;
-    if (input_irq_enabled) fm1_wl82_keyscan_async_kick(&scanner);
+    if (input_irq_enabled) {
+        fm1_encoders_capture(&encoders, &encoder_sequence, scanner.sequence, scanner.ready_rows);
+        fm1_wl82_keyscan_async_kick(&scanner);
+    }
     input_release(flags);
 }
 
@@ -363,6 +373,13 @@ static void scan_stop(void)
     }
 }
 
+static int scan_timer_start(void)
+{
+    if (scan_timer > 0) return 0;
+    scan_timer = sys_usec_timer_add(0, scan_tick, 1000u, 1, 0);
+    return scan_timer > 0 ? 0 : -31;
+}
+
 static int scan_start(void)
 {
     unsigned flags;
@@ -370,13 +387,14 @@ static int scan_start(void)
     bit_clr_ie(IRQ_SPI2_IDX, 0);
     flags = input_take();
     rc = fm1_wl82_keyscan_async_start(&scanner, 0, now_us);
+    encoders.valid = 0;
+    encoder_sequence = 0;
     input_irq_enabled = !rc;
     input_release(flags);
     if (!rc) {
         input_irq_registered = 1;
         request_irq(IRQ_SPI2_IDX, 5, scan_isr, 0);
-        scan_timer = sys_usec_timer_add(0, scan_tick, 1000u, 1, 0);
-        if (scan_timer <= 0) rc = -31;
+        rc = scan_timer_start();
     }
     if (rc) scan_stop();
     return rc;
@@ -448,6 +466,22 @@ static void toggle_music_mode(void *unused)
     fm1_doom_sound_toggle_music_mode();
 }
 
+/* Scanner IRQ owns quadrature capture. The task applies completed counts
+ * after releasing input_lock, so it never nests scanner and audio locks. */
+static void update_sound_edit(void)
+{
+    int32_t counts[7];
+    unsigned flags = input_take();
+    memcpy(counts, encoders.count, sizeof(counts));
+    input_release(flags);
+    if (!fm1_doom_edit_update(&sound_edit, counts)) return;
+    flags = fm1_doom_sound_lock();
+    fm1_doom_music_set_edit_controls(&sound_edit.value);
+    fm1_doom_sound_unlock(flags);
+    edit_snapshot = fm1_doom_edit_pack(&sound_edit.value);
+    __asm__ volatile("csync" ::: "memory");
+}
+
 static int write_rows(void *unused, unsigned y, unsigned rows, const uint8_t *pixels)
 {
     uint32_t now;
@@ -490,6 +524,15 @@ static void sleep_ms(void *unused, uint32_t milliseconds)
     os_time_dly(milliseconds >= 10u ? (int)((milliseconds + 9u) / 10u) : 0);
 }
 
+/* Both workers run on CPU0. Publish after shared IIS/ADC initialization (or
+ * an early failure) so USB attachment never races peripheral setup. */
+static volatile unsigned board_startup_complete;
+
+int fm1_doom_usb_board_ready(void)
+{
+    return board_startup_complete != 0;
+}
+
 static void fm1_doom_task(void *unused)
 {
     static char *argv[] = {"fm1doom", "-iwad", "doom1.wad", "-warp", "1",
@@ -498,6 +541,7 @@ static void fm1_doom_task(void *unused)
     uint8_t *cache;
     size_t cache_len;
     int rc;
+    uint32_t diagnostic_start;
     (void)unused;
     fm1_boot_trace_mark(FM1_TRACE_WORKER);
     fm1_doom_stage = 2;
@@ -508,8 +552,17 @@ static void fm1_doom_task(void *unused)
                       fm1_doom_embedded_archive_len, cache, cache_len,
                       fm1_fmd_zliblite_inflate, 0);
     if (rc) { fm1_doom_fault = -11; goto failed; }
+    /* The current UAC NES owner establishes IIS clocks and primes PB6 before
+     * LCD/scanner setup. Engine sound initialization later reuses this owner;
+     * an IIS failure remains nonfatal and visible through audio diagnostics. */
+    (void)fm1_doom_sound_init();
+    fm1_doom_edit_init(&sound_edit);
+    board_startup_complete = 1;
+    /* Poll during LCD initialization, as the UAC NES DAC owner does. The
+     * existing pacer skips scanner work until input_irq_enabled is set. */
+    (void)scan_timer_start();
     rc = fm1_display_test_init();
-    if (rc) { fm1_doom_fault = rc; goto failed_display; }
+    if (rc) { fm1_doom_fault = rc; goto failed_keys; }
     /* Input failure must not hide the first rendered frame. */
     rc = scan_start();
     input_good_at = timer_get_ms();
@@ -520,6 +573,22 @@ static void fm1_doom_task(void *unused)
     if (fm1_doom_bind_io(&io)) { fm1_doom_fault = -12; goto failed_keys; }
     if (stop_requested) goto failed_keys;
     fm1_doom_stage = 3;
+    /* Optional cold-boot USB evidence without a USB dependency. Give the
+     * scanner its initial sweep/debounce, then sample the unused F4 key.
+     * The existing LCD DMA strip is reused; normal game art is unchanged. */
+    diagnostic_start = timer_get_ms();
+    do { (void)read_keys(0); wdt_clear(); os_time_dly(1); }
+    while ((uint32_t)(timer_get_ms() - diagnostic_start) < 60u && !stop_requested);
+    if (read_keys(0) & (UINT64_C(1) << 26)) {
+        diagnostic_start = timer_get_ms();
+        while ((uint32_t)(timer_get_ms() - diagnostic_start) < 30000u && !stop_requested) {
+            rc = fm1_doom_usb_debug_draw(io.strip_buffer, io.strip_buffer_bytes,
+                                        timer_get_ms() - diagnostic_start);
+            if (rc) { fm1_doom_fault = -20; goto failed_keys; }
+            wdt_clear(); os_time_dly(50);
+        }
+    }
+    if (stop_requested) goto failed_keys;
     doomgeneric_Create(8, argv);
     map_things = W_LumpLength(W_GetNumForName("THINGS")) / 10;
     update_game_snapshot();
@@ -527,6 +596,7 @@ static void fm1_doom_task(void *unused)
     while (!fm1_doom_fault && !stop_requested) {
         capture_between_ticks();
         if (fm1_doom_fault || stop_requested) break;
+        update_sound_edit();
         ++trace_tick_entered;
         trace_phase = 1;
         doomgeneric_Tick();
@@ -540,9 +610,9 @@ failed_keys:
     fm1_doom_usb_frame_end();
     fm1_doom_sound_shutdown();
     scan_stop();
-failed_display:
     fm1_display_test_stop();
 failed:
+    board_startup_complete = 1; /* Keep serial recovery on an early game fault. */
     fm1_doom_stage = fm1_doom_fault ? 0xff : 5;
     trace_phase = 5;
     stopped = 1;
@@ -551,10 +621,16 @@ failed:
 
 void app_main(void)
 {
+    int usb_result;
     fm1_boot_trace_mark(FM1_TRACE_APP);
     fm1_doom_stage = 1;
-    fm1_doom_fault = task_create(fm1_doom_usb_task, 0, "doom_usb");
-    if (fm1_doom_fault) { fm1_doom_stage = 0xff; stopped = 1; return; }
     fm1_doom_fault = task_create(fm1_doom_task, 0, "fm1_doom");
-    if (fm1_doom_fault) { fm1_doom_stage = 0xff; stopped = 1; }
+    if (fm1_doom_fault) {
+        fm1_doom_stage = 0xff; stopped = 1; board_startup_complete = 1;
+    }
+    /* Match NES/MDX: create the peripheral owner before the USB worker. */
+    usb_result = task_create(fm1_doom_usb_task, 0, "doom_usb");
+    if (usb_result) {
+        fm1_doom_fault = usb_result; fm1_doom_stage = 0xff;
+    }
 }

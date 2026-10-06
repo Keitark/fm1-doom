@@ -34,13 +34,13 @@ class EmittedStackTests(unittest.TestCase):
         sizes = {"fm1_doom_usb_task": 136, "command.2434": 16,
                  "fm1_doom_usb_protocol_status": 956, "fm1_doom_usb_protocol_trace": 932,
                  "fm1_doom_usb_protocol_audio": 1100, "fm1_doom_usb_protocol_volume": 640, "game_status": 720,
-                 "frame_info.2447": 204, "frame_read.2449": 424,
+                 "frame_info.2447": 204, "frame_read.2449": 424, "edit_status.2450": 600,
                  "fm1_doom_usb_protocol_usb_audio": 480, "fm1_usb_audio_target_status": 128,
                  "snprintf": 12, "vsnprintf": 136, "decimal": 24, "repeat": 16, "string": 20}
         frames = {name: {"frame_bytes": size, "direct_calls": [], "indirect_calls": []}
                   for name, size in sizes.items()}
         frames["fm1_doom_usb_task"]["direct_calls"] = ["command.2434", "fm1_doom_usb_protocol_status"]
-        frames["command.2434"]["direct_calls"] = list(sizes)[2:10]
+        frames["command.2434"]["direct_calls"] = list(sizes)[2:11]
         frames["fm1_doom_usb_protocol_usb_audio"]["direct_calls"] = ["fm1_usb_audio_target_status"]
         frames["snprintf"]["direct_calls"] = ["vsnprintf"]
         frames["vsnprintf"]["direct_calls"] = ["decimal", "repeat", "string"]
@@ -75,6 +75,16 @@ class EmittedStackTests(unittest.TestCase):
             usb_diagnostic_budget(report, 3072)
         report = self.report()
         report["functions"]["fm1_doom_usb_protocol_volume"]["frame_bytes"] = 1800
+        with self.assertRaisesRegex(ValueError, "exceeds"):
+            usb_diagnostic_budget(report, 3072)
+
+    def test_edit_reply_is_covered_by_the_stack_gate(self):
+        report = self.report()
+        del report["functions"]["edit_status.2450"]
+        with self.assertRaisesRegex(ValueError, "boundary"):
+            usb_diagnostic_budget(report, 3072)
+        report = self.report()
+        report["functions"]["edit_status.2450"]["frame_bytes"] = 1800
         with self.assertRaisesRegex(ValueError, "exceeds"):
             usb_diagnostic_budget(report, 3072)
 

@@ -24,6 +24,7 @@ static unsigned volume_starts, volume_stops, volume_ticks;
 static int volume_fail_start, volume_fail_tick;
 static uint16_t volume_raw = 1023;
 static unsigned synth_mode = 1;
+void fm1_doom_music_begin_block(void) {}
 
 void fm1_doom_music_toggle_synth_mode(void) { REQUIRE(locked); synth_mode ^= 1u; }
 unsigned fm1_doom_music_get_synth_mode(void) { REQUIRE(locked); return synth_mode; }

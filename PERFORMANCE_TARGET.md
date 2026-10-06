@@ -1,7 +1,10 @@
 # FM-1 Doom performance target
 
 The requested target is **at least 30 completed, distinct gameplay frames per
-second** on the physical 240×240 FM-1 LCD with the selected 8×8 E1M1 assets.
+second** on the physical 240×240 FM-1 LCD with the current 4×4 world/enemy
+assets and detailed 160×93 gameplay view. The 8×8 LCD presentation mode has
+been removed. The pistol keeps original pixels and the fist uses 2×2 pixels;
+no higher-resolution asset work is in scope.
 Measure after a 10-second warm-up during at least 60 seconds of active E1M1
 play. Count LCD DMA completions, not engine ticks or attempted presentations.
 The 60-second interval must contain at least 1,800 completed frames. Record
@@ -28,7 +31,10 @@ underruns. Measure p50/p95 frame intervals and each stage's busy time on the
 physical device. The host already reports archive decode counts and host
 inflate time, but those timings cannot predict the AC7911B's throughput.
 
-The direct-E1M1 engine now passes a short 32-bit host smoke with a 296 KiB
-zone. Blocking prerequisites are a target allocator with measured stacks and
-decoder scratch, a reviewed flash layout, and an FM-1 LCD/clock task binding.
-No current build can be used to measure Doom FPS on hardware.
+The direct-E1M1 engine has run on the FM-1 with stable controls and working
+audio. Earlier detailed-mode captures measured about 11 frame-counter
+increments/s; these were not a completed distinct-frame benchmark. The new
+live sound editor reserves 2 KiB of the previous 296 KiB zone allocation for
+reverb, leaving a 294 KiB engine zone. Its physical timing and live-control
+acceptance remain open. Host tests and compile/link gates do not establish
+30 FPS on the FM-1.

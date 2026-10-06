@@ -1,4 +1,5 @@
 #include "fm1_doom_usb.h"
+#include "fm1_doom_music.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -10,6 +11,7 @@ typedef struct {
     char output[8192];
     unsigned used, stop_requests, arm_calls, frame_ends, frame_reads, heap_queries, volume_queries;
     unsigned mute_requests;
+    unsigned monitor_requests, monitor_mode;
     int stopped, drained, arm_result;
     struct fm1_doom_usb_status status;
     struct fm1_doom_usb_game game;
@@ -50,6 +52,12 @@ static void set_speaker_muted(void *context, unsigned muted)
     fake_usb *fake = context;
     ++fake->mute_requests;
     fake->status.speaker_muted = muted;
+}
+static void set_music_monitor(void *context, unsigned mode)
+{
+    fake_usb *fake = context;
+    ++fake->monitor_requests;
+    fake->monitor_mode = mode;
 }
 
 static void request_stop(void *context) { ++((fake_usb *)context)->stop_requests; }
@@ -97,6 +105,120 @@ static void feed(fm1_doom_usb_protocol *protocol, const char *text, uint32_t now
     fm1_doom_usb_protocol_feed(protocol, (const uint8_t *)text, strlen(text), now, io);
 }
 
+static int music_monitor_commands_test(fake_usb *fake, fm1_doom_usb_protocol *protocol,
+                                       const fm1_doom_usb_protocol_io *io)
+{
+    memset(fake, 0, sizeof(*fake));fm1_doom_usb_protocol_reset(protocol);
+    feed(protocol, "DOOM MUSIC ME", 100, io);
+    CHECK(!fake->used && !fake->monitor_requests);
+    feed(protocol, "LODY\n", 101, io);
+    CHECK(fake->monitor_requests == 1 && fake->monitor_mode == FM1_DOOM_MUSIC_MONITOR_MELODY);
+    CHECK(protocol->monitor_mode == FM1_DOOM_MUSIC_MONITOR_MELODY && protocol->monitor_started_ms == 101);
+    feed(protocol, "DOOM MUSIC DRUMS\n", 102, io);
+    CHECK(fake->monitor_requests == 2 && fake->monitor_mode == FM1_DOOM_MUSIC_MONITOR_DRUMS);
+    feed(protocol, "DOOM MUSIC PAUSE\n", 103, io);
+    CHECK(fake->monitor_requests == 3 && fake->monitor_mode == FM1_DOOM_MUSIC_MONITOR_PAUSE);
+    feed(protocol, "DOOM MUSIC FULL\n", 104, io);
+    CHECK(fake->monitor_requests == 4 && fake->monitor_mode == FM1_DOOM_MUSIC_MONITOR_FULL);
+    CHECK(!protocol->monitor_mode);
+    CHECK(!strcmp(fake->output, "OK DOOM MUSIC MELODY\nOK DOOM MUSIC DRUMS\nOK DOOM MUSIC PAUSE\nOK DOOM MUSIC FULL\n"));
+    CHECK(!fake->stop_requests && !fake->arm_calls && !fake->mute_requests);
+    return 0;
+}
+
+static int music_monitor_invalid_commands_test(fake_usb *fake, fm1_doom_usb_protocol *protocol,
+                                               const fm1_doom_usb_protocol_io *io)
+{
+    memset(fake, 0, sizeof(*fake));fm1_doom_usb_protocol_reset(protocol);
+    feed(protocol, "DOOM MUSIC\nDOOM MUSIC 0\nDOOM MUSIC drums\nDOOM MUSIC DRUM\nDOOM MUSIC FULL \nDOOM MUSIC PAUSE X\nMUSIC DRUMS\n", 200, io);
+    CHECK(!strcmp(fake->output, "ERR COMMAND\nERR COMMAND\nERR COMMAND\nERR COMMAND\nERR COMMAND\nERR COMMAND\nERR COMMAND\n"));
+    feed(protocol, "DOOM MUSIC DRUMS\r\n", 201, io);
+    CHECK(strstr(fake->output, "ERR LINE ABORTED\n"));
+    CHECK(!fake->monitor_requests && !protocol->monitor_mode && !fake->stop_requests && !fake->arm_calls);
+    return 0;
+}
+
+static int music_monitor_unavailable_test(fake_usb *fake, fm1_doom_usb_protocol *protocol,
+                                          const fm1_doom_usb_protocol_io *io)
+{
+    fm1_doom_usb_protocol_io unavailable = *io;
+    unavailable.set_music_monitor = 0;
+    memset(fake, 0, sizeof(*fake));fm1_doom_usb_protocol_reset(protocol);
+    feed(protocol, "DOOM MUSIC DRUMS\nDOOM MUSIC FULL\n", 300, &unavailable);
+    CHECK(!strcmp(fake->output, "ERR MUSIC_MONITOR_UNAVAILABLE\nERR MUSIC_MONITOR_UNAVAILABLE\n"));
+    CHECK(!fake->monitor_requests && !protocol->monitor_mode);
+    fm1_doom_usb_protocol_tick(protocol, 15300, &unavailable);
+    CHECK(!fake->monitor_requests && !protocol->monitor_mode);
+    return 0;
+}
+
+static int music_monitor_deadline_test(fake_usb *fake, fm1_doom_usb_protocol *protocol,
+                                       const fm1_doom_usb_protocol_io *io)
+{
+    unsigned mode;
+    static const char *commands[]={"DOOM MUSIC MELODY\n", "DOOM MUSIC DRUMS\n", "DOOM MUSIC PAUSE\n"};
+    for(mode=FM1_DOOM_MUSIC_MONITOR_MELODY;mode<=FM1_DOOM_MUSIC_MONITOR_PAUSE;mode++){
+        memset(fake, 0, sizeof(*fake));fm1_doom_usb_protocol_reset(protocol);
+        feed(protocol, commands[mode-1u], UINT32_MAX-10000u, io);
+        fm1_doom_usb_protocol_tick(protocol, 4998u, io);
+        CHECK(fake->monitor_requests == 1 && fake->monitor_mode == mode && protocol->monitor_mode == mode);
+        fm1_doom_usb_protocol_tick(protocol, 4999u, io);
+        CHECK(fake->monitor_requests == 2 && fake->monitor_mode == FM1_DOOM_MUSIC_MONITOR_FULL && !protocol->monitor_mode);
+        CHECK(strstr(fake->output, "OK DOOM MUSIC FULL TIMEOUT\n"));
+        fm1_doom_usb_protocol_tick(protocol, 19999u, io);
+        CHECK(fake->monitor_requests == 2);
+    }
+    return 0;
+}
+
+static int music_monitor_full_cancels_deadline_test(fake_usb *fake, fm1_doom_usb_protocol *protocol,
+                                                   const fm1_doom_usb_protocol_io *io)
+{
+    memset(fake, 0, sizeof(*fake));fm1_doom_usb_protocol_reset(protocol);
+    feed(protocol, "DOOM MUSIC PAUSE\n", 400, io);
+    feed(protocol, "DOOM MUSIC FULL\n", 500, io);
+    fm1_doom_usb_protocol_tick(protocol, 15500, io);
+    CHECK(fake->monitor_requests == 2 && fake->monitor_mode == FM1_DOOM_MUSIC_MONITOR_FULL);
+    CHECK(!protocol->monitor_mode && !strstr(fake->output, "TIMEOUT"));
+    return 0;
+}
+
+static int music_monitor_new_command_restarts_deadline_test(fake_usb *fake, fm1_doom_usb_protocol *protocol,
+                                                            const fm1_doom_usb_protocol_io *io)
+{
+    memset(fake, 0, sizeof(*fake));fm1_doom_usb_protocol_reset(protocol);
+    feed(protocol, "DOOM MUSIC MELODY\n", 1000, io);
+    feed(protocol, "DOOM MUSIC DRUMS\n", 10000, io);
+    fm1_doom_usb_protocol_tick(protocol, 16000, io);
+    CHECK(fake->monitor_requests == 2 && fake->monitor_mode == FM1_DOOM_MUSIC_MONITOR_DRUMS);
+    fm1_doom_usb_protocol_tick(protocol, 24999, io);
+    CHECK(fake->monitor_requests == 2);
+    fm1_doom_usb_protocol_tick(protocol, 25000, io);
+    CHECK(fake->monitor_requests == 3 && fake->monitor_mode == FM1_DOOM_MUSIC_MONITOR_FULL);
+    return 0;
+}
+
+static int music_monitor_fragment_timeout_restores_full_test(fake_usb *fake, fm1_doom_usb_protocol *protocol,
+                                                             const fm1_doom_usb_protocol_io *io)
+{
+    memset(fake, 0, sizeof(*fake));fm1_doom_usb_protocol_reset(protocol);
+    feed(protocol, "DOOM MUSIC PAUSE\n", 1000, io);
+    feed(protocol, "DOOM MUSIC DR", 1001, io);
+    fm1_doom_usb_protocol_tick(protocol, 11000, io);
+    CHECK(fake->monitor_requests == 1 && fake->monitor_mode == FM1_DOOM_MUSIC_MONITOR_PAUSE && protocol->used);
+    fm1_doom_usb_protocol_tick(protocol, 11001, io);
+    CHECK(fake->monitor_requests == 2 && fake->monitor_mode == FM1_DOOM_MUSIC_MONITOR_FULL);
+    CHECK(!protocol->monitor_mode && !protocol->used && !protocol->dropping);
+    CHECK(strstr(fake->output, "ERR TIMEOUT ABORTED\n"));
+    fm1_doom_usb_protocol_tick(protocol, 16000, io);
+    CHECK(fake->monitor_requests == 2);
+    feed(protocol, "UMS\n", 16001, io);
+    CHECK(fake->monitor_requests == 2 && strstr(fake->output, "ERR COMMAND\n"));
+    feed(protocol, "DOOM MUSIC DRUMS\n", 16002, io);
+    CHECK(fake->monitor_requests == 3 && fake->monitor_mode == FM1_DOOM_MUSIC_MONITOR_DRUMS);
+    return 0;
+}
+
 int main(void)
 {
     fake_usb fake = {0};
@@ -104,10 +226,18 @@ int main(void)
     const fm1_doom_usb_protocol_io io = {
         &fake, capture, get_status, request_stop, is_stopped, tx_drained, boot_arm,
         get_game, frame_begin, frame_info, frame_read, frame_end, frame_tick,
-        get_heap_free, get_volume, format_usb_audio, set_speaker_muted
+        get_heap_free, get_volume, format_usb_audio, set_speaker_muted, set_music_monitor
     };
     char overflow[FM1_DOOM_USB_LINE_BYTES + 16u];
     unsigned i;
+    CHECK(!music_monitor_commands_test(&fake, &protocol, &io));
+    CHECK(!music_monitor_invalid_commands_test(&fake, &protocol, &io));
+    CHECK(!music_monitor_unavailable_test(&fake, &protocol, &io));
+    CHECK(!music_monitor_deadline_test(&fake, &protocol, &io));
+    CHECK(!music_monitor_full_cancels_deadline_test(&fake, &protocol, &io));
+    CHECK(!music_monitor_new_command_restarts_deadline_test(&fake, &protocol, &io));
+    CHECK(!music_monitor_fragment_timeout_restores_full_test(&fake, &protocol, &io));
+    memset(&fake, 0, sizeof(fake));
     fm1_doom_usb_protocol_reset(&protocol);
     feed(&protocol, "HE", 100, &io);
     CHECK(!fake.used);
@@ -239,6 +369,21 @@ int main(void)
     CHECK(!fake.volume_queries);
     feed(&protocol, "DOOM AUDIO\r\n", 222, &io);
     CHECK(strstr(fake.output, "ERR LINE ABORTED\n"));
+
+    memset(&fake, 0, sizeof(fake));
+    fake.status.edit_controls = 16u | (72u << 7) | (32u << 14);
+    feed(&protocol, "DOOM ED", 222, &io);
+    CHECK(!fake.used);
+    feed(&protocol, "IT\n", 222, &io);
+    CHECK(!strcmp(fake.output,
+          "DOOM EDIT preset=0 algorithm=0 vco=16 vcf=72 vca=32 reverb=0 synth_mode=0\n"));
+    memset(&fake, 0, sizeof(fake));
+    fake.status.edit_controls = UINT32_MAX;
+    fake.status.synth_mode = 1;
+    feed(&protocol, "DOOM EDIT\n", 222, &io);
+    CHECK(!strcmp(fake.output,
+          "DOOM EDIT preset=3 algorithm=3 vco=127 vcf=127 vca=127 reverb=127 synth_mode=1\n"));
+    CHECK(!fake.stop_requests && !fake.arm_calls && !fake.monitor_requests && !fake.mute_requests);
 
     memset(&fake, 0, sizeof(fake));
     fake.volume.now_ms = UINT32_MAX;
@@ -423,6 +568,6 @@ int main(void)
     CHECK(fake.used && fake.output[fake.used - 1u] == '\n');
     feed(&protocol, "UBOOT\n", 17000u, &io);
     CHECK(fake.arm_calls == 1);
-    puts("FM-1 Doom USB framing, GAME/FRAME bounds, timeout, STOP and serial UBOOT contract passed");
+    puts("FM-1 Doom USB framing, GAME/FRAME bounds, music monitor recovery, timeout, STOP and serial UBOOT contract passed");
     return 0;
 }

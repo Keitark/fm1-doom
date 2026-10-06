@@ -50,6 +50,10 @@ static OPL chip;
 static uint32_t resample_phase;
 static int16_t previous_sample,current_sample;
 static int16_t previous_drums,current_drums;
+/* Track percussion ownership when an instrument changes, rather than
+ * rescanning instruments in the default mono sample path. The saved mask
+ * belongs to the chip's last output, before the next MUS event changes it. */
+static uint16_t voice_drums_mask, output_drums_mask;
 static void OPL_WriteRegister(int reg,int value)
 {
 #ifdef FM1_DOOM_OPL_TEST
@@ -529,6 +533,10 @@ static void SetVoiceInstrument(opl_voice_t *voice,
     }
 
     voice->current_instr = instr;
+    if (((const uint8_t *)instr)[-1] >= 128)
+        voice_drums_mask |= (uint16_t)(1u << voice->index);
+    else
+        voice_drums_mask &= (uint16_t)~(1u << voice->index);
     voice->current_instr_voice = instr_voice;
 
     data = &instr->voices[instr_voice];
@@ -1328,6 +1336,7 @@ void fm1_doom_opl_start(unsigned volume)
     current_music_volume=start_music_volume=volume>127?127:(int)volume;
     voice_steals=0;resample_phase=0;previous_sample=current_sample=0;
     previous_drums=current_drums=0;
+    voice_drums_mask=output_drums_mask=0;
     /* Vanilla DMX register initialization, including its inclusive loops. */
     for(reg=0x40;reg<=0x40+21;reg++)OPL_WriteRegister(reg,0x3f);
     for(reg=0x60;reg<=0xe0+21;reg++)OPL_WriteRegister(reg,0);
@@ -1387,22 +1396,25 @@ static int16_t interpolate(int16_t previous,int16_t current,unsigned fraction)
     int change=(int)(magnitude*fraction/44100u);
     return (int16_t)((int)previous+(delta<0?-change:change));
 }
+static int16_t drum_output(uint16_t mask)
+{
+    unsigned i;int sum=0;
+    for(i=0;i<9;i++)if(mask & (1u<<i))sum+=chip.ch_out[i];
+    return (int16_t)(sum>32767?32767:sum<-32768?-32768:sum);
+}
 void fm1_doom_opl_sample_split(int16_t *full,int16_t *drums)
 {
     /* Run the chip at its native3,579,545Hz/72 rate, rather than slowing its
      * pitch/envelopes to the IIS44.1kHz rate. Integer linear interpolation. */
     while(resample_phase>=44100u){
-        unsigned i;int sum=0;
         previous_sample=current_sample;
+        /* A stem request may follow thousands of full-only samples. Reuse
+         * the actual preceding chip output so its first interpolated frame
+         * is aligned, including instrument changes at this score tick. */
+        if(drums)previous_drums=drum_output(output_drums_mask);
         OPL_calc_buffer(&chip,&current_sample,1);
-        if(drums){
-            previous_drums=current_drums;
-            for(i=0;i<9;i++){
-                const genmidi_instr_t *instrument=voices[i].current_instr;
-                if(instrument && ((const uint8_t *)instrument)[-1]>=128)sum+=chip.ch_out[i];
-            }
-            current_drums=(int16_t)(sum>32767?32767:sum<-32768?-32768:sum);
-        }
+        output_drums_mask=voice_drums_mask;
+        if(drums)current_drums=drum_output(output_drums_mask);
         resample_phase-=44100u;
     }
     if(full)*full=interpolate(previous_sample,current_sample,resample_phase);

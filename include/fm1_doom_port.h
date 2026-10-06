@@ -32,8 +32,6 @@ typedef struct {
 typedef struct {
     fm1_doom_io io;
     uint16_t palette[256];
-    /* 160x100 profile: 1 selects 8x8 LCD blocks; menus always stay detailed. */
-    uint8_t coarse_gameplay;
     uint64_t reported_keys;
     uint64_t sampled_keys;
     uint64_t pending_keys;
@@ -47,9 +45,8 @@ typedef struct {
 int fm1_doom_port_init(fm1_doom_port *port, const fm1_doom_io *io);
 void fm1_doom_palette(fm1_doom_port *port, const uint8_t rgb[768]);
 int fm1_doom_present(fm1_doom_port *port, const uint8_t indexed[FM1_DOOM_SOURCE_WIDTH * FM1_DOOM_SOURCE_HEIGHT]);
-/* Returns one Doom key edge per call. Slot 24 toggles gameplay presentation;
-   slot 25 toggles music through its owner callback. Both act only on press
-   and never become engine events. Re-polls only after all prior
+/* Returns one Doom key edge per call. Slot 25 toggles music through its owner
+   callback on press and never becomes an engine event. Re-polls only after all prior
    edges were delivered, preserving simultaneous ordinary key edges. */
 int fm1_doom_next_key(fm1_doom_port *port, int *pressed, uint8_t *key);
 

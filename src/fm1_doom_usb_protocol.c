@@ -1,4 +1,5 @@
 #include "fm1_doom_usb.h"
+#include "fm1_doom_music.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -61,6 +62,23 @@ static USB_NOINLINE void frame_info(const fm1_doom_usb_protocol_io *io)
              "DOOM FRAMEINFO state=%lu ready=%d id=%lu width=160 height=100 bytes=16512 coarse=%lu menu=%lu\n",
              (unsigned long)frame.state, frame.state == 2, (unsigned long)frame.id,
              (unsigned long)frame.coarse, (unsigned long)frame.menu);
+    io->reply(io->context, output);
+}
+
+static USB_NOINLINE void edit_status(const fm1_doom_usb_protocol_io *io)
+{
+    struct fm1_doom_usb_status status;
+    uint32_t value;
+    char output[128];
+    memset(&status, 0, sizeof(status));
+    io->get_status(io->context, &status);
+    value = status.edit_controls;
+    snprintf(output, sizeof(output),
+             "DOOM EDIT preset=%u algorithm=%u vco=%u vcf=%u vca=%u reverb=%u synth_mode=%lu\n",
+             (unsigned)(value >> 28 & 3u), (unsigned)(value >> 30),
+             (unsigned)(value & 127u), (unsigned)(value >> 7 & 127u),
+             (unsigned)(value >> 14 & 127u), (unsigned)(value >> 21 & 127u),
+             (unsigned long)status.synth_mode);
     io->reply(io->context, output);
 }
 
@@ -217,8 +235,27 @@ static USB_NOINLINE void command(fm1_doom_usb_protocol *protocol, int isolated, 
         fm1_doom_usb_protocol_trace(io);
     } else if (!strcmp(protocol->line, "DOOM AUDIO")) {
         fm1_doom_usb_protocol_audio(io);
+    } else if (!strcmp(protocol->line, "DOOM EDIT")) {
+        edit_status(io);
     } else if (!strcmp(protocol->line, "DOOM USB_AUDIO")) {
         fm1_doom_usb_protocol_usb_audio(io);
+    } else if (!strcmp(protocol->line, "DOOM MUSIC FULL") ||
+               !strcmp(protocol->line, "DOOM MUSIC MELODY") ||
+               !strcmp(protocol->line, "DOOM MUSIC DRUMS") ||
+               !strcmp(protocol->line, "DOOM MUSIC PAUSE")) {
+        unsigned mode = !strcmp(protocol->line + 11, "MELODY") ? FM1_DOOM_MUSIC_MONITOR_MELODY
+                      : !strcmp(protocol->line + 11, "DRUMS") ? FM1_DOOM_MUSIC_MONITOR_DRUMS
+                      : !strcmp(protocol->line + 11, "PAUSE") ? FM1_DOOM_MUSIC_MONITOR_PAUSE
+                      : FM1_DOOM_MUSIC_MONITOR_FULL;
+        if (io->set_music_monitor) {
+            io->set_music_monitor(io->context, mode);
+            protocol->monitor_mode = mode;
+            protocol->monitor_started_ms = now_ms;
+            io->reply(io->context, mode == FM1_DOOM_MUSIC_MONITOR_MELODY ? "OK DOOM MUSIC MELODY\n"
+                      : mode == FM1_DOOM_MUSIC_MONITOR_DRUMS ? "OK DOOM MUSIC DRUMS\n"
+                      : mode == FM1_DOOM_MUSIC_MONITOR_PAUSE ? "OK DOOM MUSIC PAUSE\n"
+                      : "OK DOOM MUSIC FULL\n");
+        } else io->reply(io->context, "ERR MUSIC_MONITOR_UNAVAILABLE\n");
     } else if (!strcmp(protocol->line, "DOOM MUTE 1") ||
                !strcmp(protocol->line, "DOOM MUTE 0")) {
         unsigned muted = protocol->line[10] == '1';
@@ -268,8 +305,16 @@ void fm1_doom_usb_protocol_tick(fm1_doom_usb_protocol *protocol,
                                const fm1_doom_usb_protocol_io *io)
 {
     if (io->frame_tick) io->frame_tick(io->context, now_ms);
+    if (protocol->monitor_mode &&
+        (uint32_t)(now_ms - protocol->monitor_started_ms) >= FM1_DOOM_USB_MUSIC_MONITOR_MS) {
+        if (io->set_music_monitor) io->set_music_monitor(io->context, FM1_DOOM_MUSIC_MONITOR_FULL);
+        protocol->monitor_mode = 0;
+        io->reply(io->context, "OK DOOM MUSIC FULL TIMEOUT\n");
+    }
     if ((protocol->used || protocol->dropping) &&
         (uint32_t)(now_ms - protocol->started_ms) >= FM1_DOOM_USB_FRAGMENT_TIMEOUT_MS) {
+        if (protocol->monitor_mode && io->set_music_monitor)
+            io->set_music_monitor(io->context, FM1_DOOM_MUSIC_MONITOR_FULL);
         fm1_doom_usb_protocol_reset(protocol);
         if (io->frame_end) io->frame_end(io->context);
         io->reply(io->context, "ERR TIMEOUT ABORTED\n");

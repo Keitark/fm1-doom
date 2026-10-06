@@ -336,13 +336,14 @@ def main() -> int:
     sources = [fm1 / "firmware/nes/boot/board.c",
                ROOT / "src/fm1_doom_target.c",
                ROOT / "src/fm1_doom_target_io.c",
+               ROOT / "src/fm1_doom_edit.c",
                ROOT / "src/fm1_doom_target_libc.c",
                ROOT / "src/fm1_doom_printf.c",
                fm1 / "firmware/nes/boot/display_test.c",
                fm1 / "firmware/nes/src/fm1_wl82_keyscan.c",
                fm1 / "firmware/nes/src/fm1_stock_keys.c", blob]
     sources += [ROOT / "src" / name for name in (
-        "fm1_doom_usb.c", "fm1_doom_usb_protocol.c", "fm1_usb_audio_capture.c",
+        "fm1_doom_usb.c", "fm1_doom_usb_protocol.c", "fm1_doom_usb_debug.c", "fm1_usb_audio_capture.c",
         "fm1_usb_audio_profile.c", "fm1_usb_audio_target.c", "fm1_usb_packet.c")]
     source_closure.add(ROOT / "tools/doom_usb_overlay.py")
     audio_source = ROOT / "src/fm1_doom_sound.c"
@@ -359,7 +360,7 @@ def main() -> int:
                 fm1 / "firmware/nes/src/fm1_audio_queue.c",
                 fm1 / "firmware/nes/src/fm1_volume.c"]
     sources += [path for path, _ in private_banks.values()]
-    sources += [usb / name for name in ("dma.c", "rx_channel.c", "boot_entry.c")]
+    sources += [usb / name for name in ("dma.c", "rx_channel.c", "boot_entry.c", "peripheral_logic.c")]
     for name, transform in (("descriptors.c", doom_usb_overlay.descriptors),
                             ("usb_policy.c", doom_usb_overlay.policy)):
         original = usb / name

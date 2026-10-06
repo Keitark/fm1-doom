@@ -24,13 +24,36 @@ static spinlock_t *audio_lock_seen, *volume_lock_seen;
 static uint32_t adc, result, ana, pll, pb[9], reads, writes;
 static uint64_t now, next_dma, next_volume;
 static unsigned dma_calls, volume_calls, synth_mode = 1;
+void fm1_doom_music_begin_block(void) {}
 static unsigned audio_lock_calls, volume_lock_calls;
 static unsigned cpu0_masked, cpu1_masked;
-static int fail_open;
+static int fail_open, fail_rate;
+enum init_event {
+    INIT_IIS_OPEN, INIT_IIS_HANDLER, INIT_IIS_RATE, INIT_ADC_MMIO,
+    INIT_ALINK_IRQ, INIT_CHANNEL_ON, INIT_CHANNEL_OFF, INIT_IIS_CLOSE
+};
+static unsigned trace_init, init_event_count, first_adc_seen, init_events[8];
 static int16_t music_left, music_right;
 static int32_t dma[128];
+static int32_t dma_before_render[128];
+static unsigned inspect_dma_during_music, inspected_music_frames;
 static void (*handler)(void *, u8 *, int, u8);
 static void (*irq_handler)(void);
+
+static void init_event(unsigned event)
+{
+    if (!trace_init) return;
+    REQUIRE(init_event_count < sizeof(init_events) / sizeof(init_events[0]));
+    init_events[init_event_count++] = event;
+}
+
+static void adc_mmio_event(void)
+{
+    if (trace_init && !first_adc_seen) {
+        first_adc_seen = 1;
+        init_event(INIT_ADC_MMIO);
+    }
+}
 
 unsigned fm1_sound_test_irq_save(void)
 {
@@ -65,6 +88,7 @@ uint32_t fm1_volume_test_read(uint32_t address)
     REQUIRE(irq_disabled && lock_depth && !in_dma);
     if (!volume_lock_seen) volume_lock_seen = locks[lock_depth - 1];
     REQUIRE(locks[lock_depth - 1] == volume_lock_seen && volume_lock_seen != audio_lock_seen);
+    adc_mmio_event();
     ++reads;
     if (address == ADC) return adc;
     if (address == ADC + 4) return result;
@@ -81,6 +105,7 @@ void fm1_volume_test_write(uint32_t address, uint32_t value)
 {
     REQUIRE(irq_disabled && lock_depth && !in_dma);
     REQUIRE(locks[lock_depth - 1] == volume_lock_seen && volume_lock_seen != audio_lock_seen);
+    adc_mmio_event();
     ++writes;
     if (address == ADC) {
         REQUIRE(!(value & 0x20)); /* The polling driver never enables ADC IRQ. */
@@ -97,6 +122,12 @@ void fm1_doom_music_sample_stereo(int16_t *left, int16_t *right)
 {
     REQUIRE(irq_disabled && lock_depth && in_dma);
     REQUIRE(locks[lock_depth - 1] == audio_lock_seen && audio_lock_seen != volume_lock_seen);
+    if (inspect_dma_during_music) {
+        /* The DAC may consume this SDK buffer while the renderer is late.
+         * Every generation call must still see the previous published block. */
+        REQUIRE(!memcmp(dma, dma_before_render, sizeof(dma)));
+        ++inspected_music_frames;
+    }
     *left = music_left;
     *right = music_right;
 }
@@ -121,21 +152,36 @@ int iis_open(struct iis_platform_data *pd, u8 index)
 {
     REQUIRE(!index && pd->port_sel == IIS_PORTC && pd->channel_out == 8 &&
             pd->data_width == 8 && pd->mclk_output == 1 && pd->sr_points == 128);
+    init_event(INIT_IIS_OPEN);
     return fail_open;
 }
-void iis_close(u8 index) { REQUIRE(!index && !registered && !lock_depth); }
+void iis_close(u8 index)
+{
+    REQUIRE(!index && !registered && !lock_depth);
+    init_event(INIT_IIS_CLOSE);
+}
 int iis_set_sample_rate(int rate, u8 index)
 {
     REQUIRE(rate == 44100 && !index);
-    return 0;
+    init_event(INIT_IIS_RATE);
+    return fail_rate;
 }
 void iis_set_dec_data_handler(void *context, void (*cb)(void *, u8 *, int, u8), u8 index)
 {
     REQUIRE(!context && !index);
+    init_event(INIT_IIS_HANDLER);
     handler = cb;
 }
-void iis_channel_on(u8 channel, u8 index) { REQUIRE(channel == 8 && !index && registered); }
-void iis_channel_off(u8 channel, u8 index) { REQUIRE(channel == 8 && !index && !registered); }
+void iis_channel_on(u8 channel, u8 index)
+{
+    REQUIRE(channel == 8 && !index && registered);
+    init_event(INIT_CHANNEL_ON);
+}
+void iis_channel_off(u8 channel, u8 index)
+{
+    REQUIRE(channel == 8 && !index && !registered);
+    init_event(INIT_CHANNEL_OFF);
+}
 void iis_irq_handler(u8 index)
 {
     REQUIRE(!index && irq_disabled && lock_depth && in_dma && handler);
@@ -150,6 +196,7 @@ unsigned long jiffies_half_msec(void)
 void request_irq(unsigned irq, int priority, void (*cb)(void), unsigned cpu)
 {
     REQUIRE(irq == IRQ_ALNK_IDX && priority == 3 && cpu == 1 && !registered && cpu0_masked);
+    init_event(INIT_ALINK_IRQ);
     irq_handler = cb;
     registered = 1;
 }
@@ -221,6 +268,8 @@ static void run_for_ms(unsigned milliseconds)
 static void reset_fixture(void)
 {
     unsigned i;
+    inspect_dma_during_music = inspected_music_frames = 0;
+    trace_init = 0;
     fm1_doom_sound_shutdown();
     REQUIRE(!registered && !lock_depth && !irq_disabled);
     adc = result = reads = writes = 0;
@@ -232,7 +281,8 @@ static void reset_fixture(void)
     dma_calls = volume_calls = 0;
     cpu0_masked = cpu1_masked = 0;
     conversion_ready = 1;
-    fail_open = 0;
+    fail_open = fail_rate = 0;
+    first_adc_seen = init_event_count = 0;
     handler = 0;
     memset(dma, 0, sizeof(dma));
 }
@@ -253,6 +303,179 @@ static void require_audio_samples(int32_t left, int32_t right)
         REQUIRE(dma[frame * 2] == left);
         REQUIRE(dma[frame * 2 + 1] == right);
     }
+}
+
+static void require_dma_unchanged_during_render(void)
+{
+    memcpy(dma_before_render, dma, sizeof(dma));
+    inspected_music_frames = 0;
+    inspect_dma_during_music = 1;
+    dma_tick();
+    inspect_dma_during_music = 0;
+    REQUIRE(inspected_music_frames == 64);
+}
+
+static void test_low_volume_dma_publishes_only_completed_scaled_block(void)
+{
+    fm1_doom_sound_diagnostics before, after;
+    reset_fixture(); result = 64; start_constant_music(); run_for_ms(1300);
+    before = diagnostics();
+    REQUIRE(before.ready && !before.error && before.volume_target == 8 && before.volume_gain == 8);
+    require_audio_samples(48000, -80000);
+    /* New loud input cannot replace any of the old low-volume samples until
+     * all64 stereo frames have been generated and the master gain applied. */
+    music_left = 8191; music_right = -8192;
+    require_dma_unchanged_during_render();
+    require_audio_samples(131056, -131072); /* PCM16*256*8/128. */
+    after = diagnostics();
+    REQUIRE(after.output_frames == before.output_frames + 64 && after.volume_gain == 8 && !after.error);
+    music_left = -6144; music_right = 4095;
+    require_dma_unchanged_during_render();
+    require_audio_samples(-98304, 65520);
+    fm1_doom_sound_shutdown();
+}
+
+static void test_muted_dma_stays_silent_during_nonzero_music_generation(void)
+{
+    fm1_doom_sound_diagnostics before, after;
+    reset_fixture(); result = 1023; start_constant_music(); run_for_ms(1300);
+    fm1_doom_sound_set_speaker_muted(1); run_for_ms(200);
+    before = diagnostics();
+    REQUIRE(before.ready && before.speaker_muted && before.volume_target == 127 && !before.volume_gain);
+    require_audio_samples(0, 0);
+    music_left = 8191; music_right = -8192;
+    require_dma_unchanged_during_render();
+    require_audio_samples(0, 0);
+    after = diagnostics();
+    REQUIRE(after.output_frames == before.output_frames + 64 && after.speaker_muted && !after.volume_gain && !after.error);
+    fm1_doom_sound_shutdown();
+}
+
+static void test_default_init_orders_iis_rate_before_adc_and_alink(void)
+{
+    static const unsigned expected[] = {
+        INIT_IIS_OPEN, INIT_IIS_HANDLER, INIT_IIS_RATE, INIT_ADC_MMIO,
+        INIT_ALINK_IRQ, INIT_CHANNEL_ON
+    };
+    reset_fixture(); result = 512;
+    trace_init = 1;
+    REQUIRE(!fm1_doom_sound_init() && registered);
+    trace_init = 0;
+    REQUIRE(init_event_count == sizeof(expected) / sizeof(expected[0]));
+    REQUIRE(!memcmp(init_events, expected, sizeof(expected)) && first_adc_seen);
+    REQUIRE(reads && writes && (adc & 0x10) && !(adc & 0x20));
+    fm1_doom_sound_set_speaker_muted(0);
+    music_left = 3000; music_right = -5000;
+    run_for_ms(1300);
+    REQUIRE(diagnostics().volume_samples == 650 && diagnostics().volume_gain == 64);
+    require_audio_samples(384000, -640000);
+    fm1_doom_sound_shutdown();
+}
+
+static void test_iis_failures_never_launch_unstarted_adc(void)
+{
+    static const unsigned open_failure[] = {INIT_IIS_OPEN};
+    static const unsigned rate_failure[] = {
+        INIT_IIS_OPEN, INIT_IIS_HANDLER, INIT_IIS_RATE, INIT_CHANNEL_OFF, INIT_IIS_CLOSE
+    };
+    unsigned i;
+    uint32_t samples_before;
+    reset_fixture(); fail_open = -17; trace_init = 1;
+    samples_before = diagnostics().volume_samples;
+    REQUIRE(fm1_doom_sound_init() == -17 && !registered);
+    trace_init = 0;
+    REQUIRE(init_event_count == sizeof(open_failure) / sizeof(open_failure[0]));
+    REQUIRE(!memcmp(init_events, open_failure, sizeof(open_failure)));
+    REQUIRE(!reads && !writes && !first_adc_seen && !(adc & 0x30));
+    for (i = 0; i < 20; ++i) volume_tick();
+    REQUIRE(!reads && !writes && diagnostics().volume_samples == samples_before);
+
+    reset_fixture(); fail_rate = -18; trace_init = 1;
+    samples_before = diagnostics().volume_samples;
+    REQUIRE(fm1_doom_sound_init() == -18 && !registered);
+    trace_init = 0;
+    REQUIRE(init_event_count == sizeof(rate_failure) / sizeof(rate_failure[0]));
+    REQUIRE(!memcmp(init_events, rate_failure, sizeof(rate_failure)));
+    REQUIRE(!reads && !writes && !first_adc_seen && !(adc & 0x30));
+    for (i = 0; i < 20; ++i) volume_tick();
+    REQUIRE(!reads && !writes && diagnostics().volume_samples == samples_before);
+    fm1_doom_sound_shutdown();
+}
+
+static void test_early_adc_prime_survives_audio_initialization(void)
+{
+    fm1_doom_volume_hardware before, after;
+    uint32_t reads_before, writes_before;
+    unsigned i;
+    reset_fixture();
+    result = 512;
+    REQUIRE(!fm1_doom_sound_volume_start() && !registered);
+    REQUIRE(fm1_doom_sound_speaker_is_muted() == !!FM1_DOOM_BOOT_MUTED);
+    for (i = 0; i < 12; ++i) volume_tick();
+    fm1_doom_sound_get_volume_hardware(&before);
+    REQUIRE(before.running && before.valid && before.raw == 512 && before.accepted == 512 &&
+            before.target == 64 && before.samples == 12 && !before.errors && !before.gain);
+    /* Repeated start and audio initialization cannot reset the accepted knob
+     * or reconfigure ADC/GPIO gates while the timer owns live conversions. */
+    reads_before = reads; writes_before = writes;
+    REQUIRE(!fm1_doom_sound_volume_start());
+    REQUIRE(reads == reads_before && writes == writes_before);
+    fm1_doom_sound_set_speaker_muted(!FM1_DOOM_BOOT_MUTED);
+    REQUIRE(!fm1_doom_sound_init() && registered);
+    REQUIRE(reads == reads_before && writes == writes_before);
+    REQUIRE(fm1_doom_sound_speaker_is_muted() == !FM1_DOOM_BOOT_MUTED);
+    fm1_doom_sound_get_volume_hardware(&after);
+    REQUIRE(!memcmp(&before, &after, sizeof(before)));
+    fm1_doom_sound_set_speaker_muted(0);
+    music_left = 3000; music_right = -5000;
+    run_for_ms(1300);
+    REQUIRE(diagnostics().volume_gain == 64 && diagnostics().volume_samples == 662);
+    require_audio_samples(384000, -640000);
+    fm1_doom_sound_shutdown();
+}
+
+static void test_early_adc_errors_are_not_retried_by_audio_initialization(void)
+{
+    fm1_doom_volume_hardware hardware;
+    uint32_t reads_before, writes_before;
+    unsigned i;
+    reset_fixture();
+    adc = 0x10; /* Another owner blocks the initial explicit ADC start. */
+    REQUIRE(fm1_doom_sound_volume_start() == -1 && !writes);
+    adc = 0; /* Releasing that owner must not trigger a hidden retry. */
+    reads_before = reads; writes_before = writes;
+    REQUIRE(fm1_doom_sound_volume_start() == -1);
+    REQUIRE(!fm1_doom_sound_init() && registered);
+    REQUIRE(reads == reads_before && writes == writes_before);
+    fm1_doom_sound_get_volume_hardware(&hardware);
+    REQUIRE(!hardware.running && !hardware.valid && hardware.errors == 1 && !hardware.samples);
+    music_left = 3000; music_right = -5000;
+    run_for_ms(1300);
+    REQUIRE(diagnostics().ready && !diagnostics().volume_gain && diagnostics().volume_errors == 1);
+    require_audio_samples(0, 0);
+    fm1_doom_sound_shutdown();
+
+    reset_fixture();
+    REQUIRE(!fm1_doom_sound_volume_start());
+    conversion_ready = 0;
+    for (i = 0; i < 10; ++i) volume_tick();
+    reads_before = reads; writes_before = writes;
+    REQUIRE(fm1_doom_sound_volume_start() == -1);
+    REQUIRE(!fm1_doom_sound_init() && registered);
+    REQUIRE(reads == reads_before && writes == writes_before);
+    fm1_doom_sound_get_volume_hardware(&hardware);
+    REQUIRE(!hardware.running && !hardware.valid && hardware.errors == 1 && !hardware.samples);
+    fm1_doom_sound_shutdown();
+    cpu0_masked = cpu1_masked = 0;
+    conversion_ready = 1; result = 1023;
+    REQUIRE(!fm1_doom_sound_volume_start()); /* Explicit shutdown permits restart. */
+    REQUIRE(!fm1_doom_sound_init() && registered);
+    fm1_doom_sound_set_speaker_muted(0);
+    music_left = 3000; music_right = -5000;
+    run_for_ms(1300);
+    REQUIRE(diagnostics().volume_gain == 127 && !diagnostics().volume_errors);
+    require_audio_samples(762000, -1270000);
+    fm1_doom_sound_shutdown();
 }
 
 static void test_volume_hardware_snapshot_is_read_only_and_lock_bounded(void)
@@ -410,11 +633,12 @@ static void test_conversion_timeout_mutes_without_stopping_audio(void)
 static void test_volume_sampling_is_safe_before_init_and_after_iis_failure(void)
 {
     unsigned i;
-    uint32_t reads_before, writes_before;
+    uint32_t reads_before, writes_before, samples_before;
     fm1_doom_sound_diagnostics status;
     reset_fixture();
     for (i = 0; i < 100; ++i) volume_tick();
     REQUIRE(!reads && !writes && !registered && !dma_calls);
+    samples_before = diagnostics().volume_samples;
     fail_open = -17;
     REQUIRE(fm1_doom_sound_init() == -17 && !registered);
     REQUIRE(!(adc & 0x30));
@@ -424,7 +648,7 @@ static void test_volume_sampling_is_safe_before_init_and_after_iis_failure(void)
     status = diagnostics();
     REQUIRE(reads == reads_before && writes == writes_before && !status.ready &&
             status.error == -17 && !status.volume_valid && !status.volume_gain &&
-            !status.volume_samples && !status.irq_count && !status.output_frames);
+            status.volume_samples == samples_before && !status.irq_count && !status.output_frames);
     fm1_doom_sound_shutdown();
 }
 
@@ -509,6 +733,12 @@ static void test_boot_mute_is_applied_on_each_initialization(void)
 
 int main(void)
 {
+    test_low_volume_dma_publishes_only_completed_scaled_block();
+    test_muted_dma_stays_silent_during_nonzero_music_generation();
+    test_default_init_orders_iis_rate_before_adc_and_alink();
+    test_iis_failures_never_launch_unstarted_adc();
+    test_early_adc_prime_survives_audio_initialization();
+    test_early_adc_errors_are_not_retried_by_audio_initialization();
     test_volume_hardware_snapshot_is_read_only_and_lock_bounded();
     test_real_adc_knob_controls_nonzero_dma_audio();
     test_volume_sampling_uses_independent_timer_not_dma();
@@ -516,6 +746,6 @@ int main(void)
     test_volume_sampling_is_safe_before_init_and_after_iis_failure();
     test_speaker_mute_retains_knob_without_adc_or_render_lock();
     test_boot_mute_is_applied_on_each_initialization();
-    puts("Doom real ADC4 volume integration, CPU1 DMA, speaker mute/unmute, boot default, timeout and IIS failure contract passed");
+    puts("Doom real ADC4 IIS-before-ADC startup/state preservation, CPU1 scaled DMA publication, speaker mute/unmute, boot default, timeout and IIS failure contract passed");
     return 0;
 }

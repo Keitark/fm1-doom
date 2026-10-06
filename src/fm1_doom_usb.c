@@ -7,6 +7,8 @@
 #include "boot_entry.h"
 #include "fm1_doom_usb.h"
 #include "fm1_doom_sound.h"
+#include "fm1_doom_music.h"
+#include "fm1_doom_usb_debug.h"
 #include "fm1_usb_audio_target.h"
 
 extern int fm1_cdc_ready(usb_dev id);
@@ -83,6 +85,19 @@ static void get_volume(void *context, struct fm1_doom_usb_volume *volume)
 { (void)context; fm1_doom_usb_get_volume(volume); }
 static void set_speaker_muted(void *context, unsigned muted)
 { (void)context; fm1_doom_sound_set_speaker_muted(muted); }
+static void set_music_monitor(void *context, unsigned mode)
+{
+    unsigned flags;
+    (void)context;
+    flags = fm1_doom_sound_lock();
+    fm1_doom_music_set_monitor(mode);
+    fm1_doom_sound_unlock(flags);
+}
+static void reset_protocol(void)
+{
+    if (protocol.monitor_mode) set_music_monitor(0, FM1_DOOM_MUSIC_MONITOR_FULL);
+    fm1_doom_usb_protocol_reset(&protocol);
+}
 
 void __attribute__((noinline, used)) fm1_doom_usb_task(void *argument)
 {
@@ -92,12 +107,16 @@ void __attribute__((noinline, used)) fm1_doom_usb_task(void *argument)
     const fm1_doom_usb_protocol_io io = {
         0, reply, get_status, request_stop, is_stopped, tx_drained, boot_arm,
         get_game, frame_begin, frame_info, frame_read, frame_end, frame_tick,
-        get_heap_free, get_volume, fm1_usb_audio_target_status, set_speaker_muted
+        get_heap_free, get_volume, fm1_usb_audio_target_status, set_speaker_muted,
+        set_music_monitor
     };
     (void)argument;
     fm1_doom_usb_stage = 1;
+    while (!fm1_doom_usb_board_ready()) os_time_dly(1);
+    fm1_doom_usb_debug_snapshot(0);
     fm1_usb_audio_target_init();
     fm1_doom_usb_error = usb_device_mode(FM1_USB_CONTROLLER, CDC_CLASS);
+    fm1_doom_usb_debug_snapshot(1);
     if (fm1_doom_usb_error) {
         fm1_doom_usb_stage = 0xff;
         for (;;) os_time_dly(100);
@@ -109,14 +128,14 @@ void __attribute__((noinline, used)) fm1_doom_usb_task(void *argument)
         if (generation != fm1_cdc_generation || !fm1_cdc_ready(FM1_USB_CONTROLLER)) {
             generation = fm1_cdc_generation;
             fm1_doom_usb_frame_end();
-            fm1_doom_usb_protocol_reset(&protocol);
+            reset_protocol();
             tx_read = tx_write = 0;
             last = now - 1000u;
         }
         if (fm1_cdc_ready(FM1_USB_CONTROLLER)) {
             if (fm1_usb_rx_fault()) {
                 fm1_doom_usb_frame_end();
-                fm1_doom_usb_protocol_reset(&protocol);
+                reset_protocol();
                 tx_read = tx_write = 0;
                 reply(0, "ERR RX_OR_UBOOT_ABORTED\n");
             }
@@ -124,7 +143,7 @@ void __attribute__((noinline, used)) fm1_doom_usb_task(void *argument)
             if (generation != fm1_usb_rx_generation()) {
                 fm1_doom_usb_frame_end();
                 generation = fm1_usb_rx_generation();
-                fm1_doom_usb_protocol_reset(&protocol);
+                reset_protocol();
                 tx_read = tx_write = 0;
             }
             if (length) fm1_doom_usb_protocol_feed(&protocol, rx, length, now, &io);

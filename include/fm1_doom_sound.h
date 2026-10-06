@@ -60,6 +60,10 @@ typedef struct {
 /* Bounded scalar diagnostics; no mixer lock. Values may straddle a callback.
  * IRQ counts do not measure missed DMA deadlines. */
 void fm1_doom_sound_get_diagnostics(fm1_doom_sound_diagnostics *diagnostics);
+/* CPU0 starts the ADC after establishing IIS clocks, as in UAC NES startup.
+ * Repeated calls preserve samples/target and do not retry an ADC error.
+ * Shutdown ends this lifecycle and permits a fresh explicit start. */
+int fm1_doom_sound_volume_start(void);
 /* Existing CPU0 input timer calls this once every 2 ms, independently of DMA.
  * It owns the ADC through a separate short lock, with no music rendering. */
 void fm1_doom_sound_volume_tick(void);

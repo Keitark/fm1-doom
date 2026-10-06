@@ -25,6 +25,7 @@ struct fm1_doom_usb_status {
     uint32_t volume_raw, volume_gain, volume_valid, volume_errors;
     uint32_t volume_samples, volume_target;
     uint32_t synth_mode;
+    uint32_t edit_controls; /* Four7-bit knobs, Preset2-bit, Algorithm2-bit. */
     uint32_t speaker_muted;
     int heap_free;
 };
@@ -33,6 +34,7 @@ void fm1_doom_usb_get_status(struct fm1_doom_usb_status *status);
 void fm1_doom_usb_request_stop(void);
 int fm1_doom_usb_is_stopped(void);
 void fm1_doom_usb_task(void *argument);
+int fm1_doom_usb_board_ready(void);
 
 struct fm1_doom_usb_volume {
     fm1_doom_volume_hardware hardware;
@@ -71,11 +73,13 @@ void fm1_doom_usb_frame_tick(uint32_t now_ms);
 
 #define FM1_DOOM_USB_LINE_BYTES 64u
 #define FM1_DOOM_USB_FRAGMENT_TIMEOUT_MS 10000u
+#define FM1_DOOM_USB_MUSIC_MONITOR_MS 15000u
 
 typedef struct {
     char line[FM1_DOOM_USB_LINE_BYTES];
     unsigned used, dropping;
     uint32_t started_ms;
+    uint32_t monitor_mode, monitor_started_ms;
 } fm1_doom_usb_protocol;
 
 typedef struct {
@@ -96,6 +100,7 @@ typedef struct {
     void (*get_volume)(void *context, struct fm1_doom_usb_volume *volume);
     void (*format_usb_audio)(char *out, size_t length);
     void (*set_speaker_muted)(void *context, unsigned muted);
+    void (*set_music_monitor)(void *context, unsigned mode);
 } fm1_doom_usb_protocol_io;
 
 void fm1_doom_usb_protocol_reset(fm1_doom_usb_protocol *protocol);
