@@ -7,16 +7,21 @@ uses the detailed 160×93 view; the 8×8 LCD presentation toggle is removed.
 Live encoder editing controls synth presets/algorithm, VCO detune, VCF cutoff,
 VCA contour and reverb. Original OPL remains the boot default. The fixed
 296 KiB allocation is partitioned into a 294 KiB Doom zone and a 2 KiB synth
-delay; the 4 KiB archive cache is unchanged. This source revision has not
-been flashed. Dated build/bench values below describe their named checkpoints.
+delay; the 4 KiB archive cache is unchanged. Source `626d2612` is installed and
+boots with advancing game/audio telemetry. Its 139-sector update and complete
+1 MiB readback match image SHA-256 `a4c3fc49...`. Physical editing, speaker output
+and timing acceptance remain pending. Dated values below describe their named
+checkpoints; see [deployment evidence](DEPLOYMENT.md#live-editor-deployment-2026-10-07).
 
-### Offline live-editor artifact
+### Verified live-editor artifact
 
 | Gate | Result |
 | --- | --- |
 | Plain UBOOT input | `build/target-candidate/app.bin`, 565,744 B |
 | App SHA-256 | `70553874c1d8dd2e89e1448d27fbf89b1d5476b8573f3a9cb1e89fa46cfd3d35` |
 | ELF SHA-256 | `56b7036a6d5f175e5dd519dbdf1243e20b96444170ecc45d14a5732a0f33f126` |
+| Built source revision | `626d261208c6a1b9ae12783da524ea50c173b24d` |
+| Verified full-image SHA-256 | `a4c3fc499f9a3bcf017d33bc48a7d2555e6eac04d52dde5863f3313b958c48a1` |
 | App slot / remaining | 584,956 B / 19,212 B |
 | Static RAM: data + BSS | 26,928 + 452,232 = 479,160 B |
 | Linker heap / reviewed startup reserve | 44,396 B / 4,384 B |
@@ -28,8 +33,9 @@ been flashed. Dated build/bench values below describe their named checkpoints.
 The manifest records source/dependency hashes, private bank/archive hashes,
 emitted stack frames and unchanged reviewed app layout. Original game data,
 banks and firmware remain private ignored build outputs. Passing these gates
-establishes an offline UBOOT input; it does not establish physical boot,
-live knob direction, DSP deadlines, runtime high-water marks or 30 FPS.
+establishes a valid UBOOT input. Separate deployment evidence establishes
+readback and observed boot; live knob direction, DSP deadlines, runtime
+high-water marks and 30 completed distinct frames/s remain open.
 
 The current low-memory E1M1 build has a real FM-1 SDK `app_main`. It creates a
 separate Doom and USB tasks so SDK event dispatch and diagnostics continue. The task validates a local
@@ -110,7 +116,7 @@ is recorded below. The generated file includes derived game
 data and is ignored by Git; keep it private. Check its size and SHA-256
 against the manifest before loading it in your UBOOT program.
 
-## Current private-buffer and USB diagnostic candidate, 2026-10-07
+## Historical private-buffer and USB diagnostic candidate, 2026-10-07
 
 The installed plain application is563,440 B, SHA-256
 `ce8176d84946623efc296434973dbabc75c094edd3b7a8cb8ea29fbc39762ab3`.

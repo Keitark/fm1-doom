@@ -2,10 +2,88 @@
 
 ## Current result
 
-The source now removes the 8×8 presentation mode and adds live synth controls.
-That revision has not been flashed. The installed application remains the
-563,536 B `3cf7f681...` checkpoint described below. New artifact sizes and
-offline checks are recorded in [TARGET_CANDIDATE.md](TARGET_CANDIDATE.md).
+The live editor from source `626d2612` is installed: 565,744 B, app SHA-256
+`70553874...`. The build removes the 8×8 presentation mode and adds synth
+presets/algorithm and VCO/VCF/VCA/reverb editing. Its recovered 139-sector update
+and complete 1 MiB readback match `a4c3fc49...`; one reset reached stage4/fault0
+with advancing game/audio telemetry and zero LCD/key errors. Physical controls,
+speaker output, streaming and timing acceptance remain pending. See the
+[current deployment record](#live-editor-deployment-2026-10-07) and
+[artifact gates](TARGET_CANDIDATE.md).
+
+## Live-editor deployment, 2026-10-07
+
+| Item | Value |
+| --- | --- |
+| Built source revision | `626d261208c6a1b9ae12783da524ea50c173b24d` |
+| Plain `app.bin` | 565,744 B |
+| App SHA-256 | `70553874c1d8dd2e89e1448d27fbf89b1d5476b8573f3a9cb1e89fa46cfd3d35` |
+| ELF SHA-256 | `56b7036a6d5f175e5dd519dbdf1243e20b96444170ecc45d14a5732a0f33f126` |
+| Verified full-image SHA-256 | `a4c3fc499f9a3bcf017d33bc48a7d2555e6eac04d52dde5863f3313b958c48a1` |
+| App slot / remaining | 584,956 B / 19,212 B |
+| Static RAM / linker heap | 479,160 B / 44,396 B |
+| Reviewed startup reserve | 4,384 B; required 4,096 B |
+| Shared writer source | `4363d8d`, companion FM-1 board project |
+
+The first transfer lost its UBOOT disk connection after verifying 136 of the
+139 planned sectors. The next sector was `0x8d000`; the directory sector
+`0x4000` had not been committed. The failed session and original baseline,
+candidate and sector scope were retained. The user reconnected the device on
+a different USB connection and authorized proceeding.
+
+Explicit `recover_flash` in a new protected snapshot first read all 1 MiB of
+current flash. SHA-256
+`0cd85354ca3461f6ca2f16f3b8ac6d8e84d2c4df3dd56563acd3c3307151d8d8`
+was recorded. The recovery guard verified the 136 candidate sectors, untouched
+baseline sectors and protected boot/config bytes; only the next uncertain
+sector could differ. The changed target
+identity was accepted only after this proof. The writer then rewrote the
+original 139-sector scope, directory `0x4000` last. All 139 sector readbacks and
+the final complete 1 MiB read matched the prepared image. The protected result
+is `written_and_readback_verified`, with one complete final readback.
+Ordinary retry still requires the original device identity. No protected latch
+was cleared manually. The complete current read was used for validation,
+retaining the original baseline and failure receipts.
+
+One reset succeeded. COM4 `HELLO` returned `DOOM-FM1/1`; observation reached
+stage4/fault0, frames128→161 and LCD/key errors0. A later read-only capture
+showed gameplay frames624→757, audio frames2,578,432→2,977,216 and music
+ticks8,065→9,331, with IIS ready1/error0 and music errors0. `GAME coarse=0`
+confirms detailed presentation. All three editor samples reported
+preset0/algorithm0/vco16/vcf72/vca32/reverb0/synth_mode0, confirming Original
+OPL and default control state. Volume was valid1/errors0, raw259..260 and
+target gain32; the physical knob was not swept during this capture.
+
+A further 30.031-second read-only capture yielded 58 complete status lines,
+all stage4/fault0 with LCD/key errors0, frames1,602→1,911. The final partial
+line was excluded. Editor values stayed at their defaults; this is sustained
+telemetry, not a physical encoder-response or distinct-frame-rate test.
+
+Windows exposes healthy composite/CDC COM4 and FM1 MDX USB Audio devices. UAC
+reported armed1/active0; no recording was made. Enumeration and advancing
+audio counters do not establish audible speaker quality or USB streaming.
+Minimum unused USB stack was 270 words, observed heap was 3,508 B and maximum
+reported audio IRQ duration was 2,000 µs. Physical presets/algorithm/knobs,
+speaker music/effects/master-volume acceptance, sustained DSP deadlines,
+whole-level traversal and 30 completed distinct gameplay frames/s remain open.
+
+Validation before recovery included 44 new recovery tests and 12 existing
+retry/log tests, alongside the 13 Doom native contracts and target build gates.
+The new recovery tests exercise complete-read shape/protected-byte rejection,
+identity changes, retained failure latches and final readback failure.
+
+Private receipts remain outside the public repository:
+
+- Protected session: `FM1FlashSession-1e796214fbd742999c7eb22e214b5dd3`.
+- Recovery proof/write/full readback: `runs/0910558fe3a2414784806c5041b717ed`.
+- Single reset: `runs/f6e35792db8c4421b167df3735a19187`.
+- Serial observation: `runs/a40794c7512442cdaca86a0b173834ba`.
+- Original failed session: `FM1FlashSession-391bc34ea6334e74ae5ecd2b9e359d38`,
+  `runs/86e5bf7d96aa49beaab5718ef64d0e70`.
+- Read-only bench capture: ignored `build/bench-live-editor-20261007.json`.
+- Sustained status capture: ignored `build/bench-live-editor-controls-20261007.json`.
+
+## Historical cable and startup checkpoint
 
 The user identified the connected programmer cable as the cause on 2026-10-07.
 Switching to a normal USB data cable following the normal-boot check restored
@@ -15,7 +93,7 @@ stage4/fault0, frames1375->1409 and LCD/key errors0. No additional firmware
 was flashed. The earlier missing-USB observations do not establish a Doom
 cold-startup defect. See [USB_COLD_BOOT_AUDIT.md](USB_COLD_BOOT_AUDIT.md).
 
-Installed application `3cf7f681...` (563,536 B) changes startup to create the peripheral
+The previous application `3cf7f681...` (563,536 B) changes startup to create the peripheral
 worker first, following public NES, and explicitly waits for IIS/ADC
 initialization before USB attachment. Early game/audio failures still release
 the USB worker for recovery. The causal role of that startup-order change
@@ -30,7 +108,8 @@ UBOOT reset exposes COM4 and the UAC recording endpoint. Serial observation
 reaches stage4/fault0, frames123->157, LCD/key errors0. The user's subsequent
 cold power cycle FAILED: Windows again exposes neither FM-1 serial nor UAC.
 Startup ordering did not resolve that observation. The later cable finding
-above supersedes this investigation. The live-editor changes remain offline.
+above supersedes this investigation. The live-editor changes were offline at
+that checkpoint and have since been installed as recorded above.
 
 The previous `ce8176d8...` application was installed with a matching complete
 flash readback and successful warm serial boot. Audio now renders and applies

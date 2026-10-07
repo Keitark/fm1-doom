@@ -13,10 +13,12 @@ VCA contour and reverb mix. Presets selects Original, Warm, Acid or Room.
 Original OPL is the boot default; E4 still toggles the synth. The PB6/ADC4
 master volume remains separate. A read-only `DOOM EDIT` query exposes controls.
 Reverb has a dedicated 2 KiB buffer partitioned from the previous fixed zone,
-leaving 294 KiB for Doom. New controls have not yet been tested on hardware.
+leaving 294 KiB for Doom. This revision is now installed and boots; read-only
+telemetry confirms its default controls. Physical editing acceptance remains
+pending.
 
-The dated measurements below describe prior builds; they do not establish
-performance or acceptance of the new live editor.
+The historical measurements below describe their named builds; they do not
+establish performance or acceptance of the new live editor.
 
 Offline editor checks pass: 13 native contracts, exact original OPL reference,
 target engine/port compilation, flash/RAM/source closure and emitted USB stack
@@ -27,6 +29,31 @@ This run uses the byte-equivalent staged WAD; it does not measure device FPS
 or establish whole-level traversal. Details: [candidate](TARGET_CANDIDATE.md).
 
 ## Latest bench evidence (2026-10-07)
+
+**Live editor installed:** source `626d261208c6a1b9ae12783da524ea50c173b24d`,
+app 565,744 B/SHA-256 `70553874...`. The first transfer lost its UBOOT connection
+after 136 verified sectors, before directory commit. Explicit recovery on the
+changed USB connection first read the complete current flash and checked its
+verified prefix, untouched baseline and protected bytes. It then rewrote the
+original 139-sector scope, directory `0x4000` last. All sectors and the final
+1 MiB readback matched image SHA-256
+`a4c3fc499f9a3bcf017d33bc48a7d2555e6eac04d52dde5863f3313b958c48a1`.
+
+One reset and COM4 observation reached stage4/fault0, frames128→161 and
+LCD/key errors0. A later read-only capture showed frames624→757, advancing
+audio/music, IIS ready1/error0, music errors0 and valid volume ADC/errors0.
+`DOOM EDIT` stayed at preset0/algorithm0/vco16/vcf72/vca32/reverb0/synth_mode0;
+`GAME coarse=0` confirms the detailed presentation. A further 30.031-second
+capture yielded 58 complete status lines, frames1,602→1,911, all stage4/fault0
+and LCD/key errors0; controls stayed at their defaults. Healthy CDC and UAC devices
+enumerate; UAC armed1/active0 is not streaming acceptance. Minimum unused USB
+stack was 270 words, observed heap was 3,508 B and maximum reported audio IRQ
+duration was 2,000 µs. Physical controls/audio, sustained DSP deadlines,
+whole-level traversal and 30 completed distinct frames/s remain open. Full
+hashes and protected receipt pointers are in
+[DEPLOYMENT.md](DEPLOYMENT.md#live-editor-deployment-2026-10-07).
+
+### Historical cable and startup investigation
 
 **Cable finding:** the programmer cable was connected. The user switched to
 a normal USB data cable and the connection began working. Windows exposes
@@ -265,7 +292,7 @@ Cold-boot USB enumeration remains unresolved. SDK USB PLL initialization is
 present and preserves the CLK_CON1 source selector. The clock hypothesis has
 not been proved as the cause of the missing application interfaces.
 
-### Current DMA-output image: installed, speaker improvement reported
+### Historical DMA-output image: installed, speaker improvement reported
 
 Application 563,440 B, SHA-256
 `ce8176d84946623efc296434973dbabc75c094edd3b7a8cb8ea29fbc39762ab3`,

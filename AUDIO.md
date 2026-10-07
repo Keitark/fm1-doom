@@ -2,12 +2,17 @@
 
 ## Current source checkpoint: live sound controls
 
-The installed application is still `3cf7f681...`, **563,536 B**. Existing speaker
-output, music/effects and physical master volume have been observed and the user
-reports near-perfect speaker output. The live editing revision described here
-has **not been flashed**. All 13 native contracts and linked RAM/flash/stack
-gates pass; physical timing and control acceptance remain pending. Older bench
-figures below describe their specific images.
+The live editor from source `626d2612` is installed: **565,744 B**, app SHA-256
+`70553874...`, with complete image readback matching `a4c3fc49...`. After one
+reset, IIS reported `ready=1/error=0`; audio frames advanced 2,578,432→2,977,216
+and music ticks 8,065→9,331 with zero music errors. Read-only `DOOM EDIT`
+confirmed Original OPL mode and the default parameters. The volume ADC was
+valid with zero errors and raw 259..260/target gain 32; no knob sweep was made.
+All 13 native contracts and linked RAM/flash/stack gates pass. Earlier images
+established music/effects and physical master volume, with near-perfect speaker
+output reported by the user. Physical acceptance of this image's controls,
+speaker output and callback timing remains pending. See the
+[deployment record](DEPLOYMENT.md#live-editor-deployment-2026-10-07).
 
 The apparent cold-boot USB failure was resolved when the user replaced the
 programmer cable with a normal USB data cable. Windows then exposed healthy
@@ -69,6 +74,13 @@ unchanged OPL percussion, eight-voice rapid sweeps and release/tail convergence.
 The independent OPL reference still matches **37,784 ordered register writes
 and 4,233,600 output frames**. These are source/host results, not physical
 acceptance of the new controls or proof of target callback deadlines.
+
+The installed image exposes healthy CDC and UAC devices. UAC telemetry reported
+`armed=1/active=0`; no recording was made, so endpoint presence does not establish
+streaming acceptance. The observed maximum audio IRQ duration was 2,000 µs,
+above the nominal 64-frame/44.1 kHz interval of about 1.451 ms; sustained deadline
+acceptance remains open. Receipts and runtime stack/heap values are recorded in
+[deployment evidence](DEPLOYMENT.md#live-editor-deployment-2026-10-07).
 
 ## Historical bench investigation (2026-10-06–07)
 

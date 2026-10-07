@@ -6,12 +6,14 @@ The **original Doom engine** on the M-VAVE FM-1, based on
 
 ## Current checkpoint
 
-Gameplay, the original image menu, movement, firing, music and physical master
-volume have been observed on the device. The installed application is still
-`3cf7f681...`, **563,536 B**. The live sound controls and display changes below
-are new source work and have **not been flashed**. The candidate links at
-565,744 B, leaving 19,212 B in the reviewed app slot; RAM and emitted USB
-stack gates pass. Hardware timing and control acceptance remain pending.
+The live sound editor from source `626d2612` is installed: **565,744 B**, app
+SHA-256 `70553874...`. All 139 application sectors and the complete 1 MiB image were
+readback-verified. One reset reached `DOOM-FM1/1`, stage 4/fault 0, advancing
+gameplay and audio, and zero LCD/key errors. RAM and emitted USB stack gates
+pass; 19,212 B remain in the reviewed app slot. Earlier revisions established
+visible gameplay, menus, movement, firing, music and physical master volume.
+Physical acceptance of the new controls, speaker output and timing remains
+pending. See [deployment evidence](DEPLOYMENT.md#live-editor-deployment-2026-10-07).
 
 The current scope is **E1M1** with its complete original geometry. Gameplay uses
 all **160×93** rendered samples, scaled to **240×224**, with a **16-row HUD**.
@@ -20,7 +22,8 @@ pistol retains original detail, and the fist uses 2×2 asset blocks. These asset
 settings differ from screen resolution. The former 8×8 presentation mode and
 D♯4 view toggle have been removed from the source.
 
-Music boots in original DOS OPL mode. A switchable eight-voice synth now has
+Music boots in original DOS OPL mode, confirmed by read-only device telemetry.
+A switchable eight-voice synth now has
 live VCO, VCF, VCA and room-reverb controls. Original OPL output remains exact
 against the host reference; new control and delay-buffer regressions pass.
 Physical acceptance of the new controls remains pending. See [audio](AUDIO.md).
@@ -31,7 +34,8 @@ UAC capture endpoint; read-only observation showed advancing gameplay with
 zero LCD/key errors. A firmware cold-boot defect was not established.
 
 The hardware target remains 30 completed gameplay frames/s. Earlier observed
-builds did not meet that target; the new revision has no device FPS measurement.
+builds did not meet that target; the new revision has no completed distinct-frame
+rate measurement.
 See [performance](PERFORMANCE_TARGET.md), [bench evidence](PORT_STATUS.md),
 [deployment history](DEPLOYMENT.md) and [issue #1](https://github.com/Keitark/fm1-doom/issues/1).
 
@@ -151,9 +155,8 @@ python tools/build_target_candidate.py build\menu-ui-4k.fmd --fm1-root F:\dev\fm
 
 These commands compile/link/package locally. The private `app.bin` is the plain
 WL82 UBOOT input for a writer supporting SDK `-app app.bin`. The reviewed
-V14/v32 application allocation is **584,956 B**. The installed 563,536 B image
-leaves 21,420 B; that is the older installed image's budget, not acceptance of
-the new source. Preserve the 4,096 B reviewed startup reserve and emitted USB
+V14/v32 application allocation is **584,956 B**. The installed 565,744 B image
+leaves 19,212 B. Preserve the 4,096 B reviewed startup reserve and emitted USB
 stack gate. SDK aggregate `heap_free` is not the largest free block.
 See [candidate format and gates](TARGET_CANDIDATE.md) and
 [port audit](AUDIT.md).
