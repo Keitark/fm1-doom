@@ -1,32 +1,66 @@
 # Port status and acceptance gates
 
-## Current source scope (2026-10-07)
+## Current source scope (2026-10-08)
 
 E1M1 remains the only level. Gameplay always uses the detailed 160×93 view,
 scaled to 240×224 above the 16-row HUD; the 8×8 presentation path and D♯4
 toggle are removed. Existing 4×4 world/enemy assets, original pistol pixels
 and 2×2 fist assets remain. Higher-resolution work was cancelled.
 
-Live sound editing now uses the proven NES digital encoder decoder. Algorithm
-selects four synth configurations; Knobs 1–4 control VCO detune, VCF cutoff,
-VCA contour and reverb mix. Presets selects Original, Warm, Acid or Room.
-Original OPL is the boot default; E4 still toggles the synth. The PB6/ADC4
-master volume remains separate. A read-only `DOOM EDIT` query exposes controls.
-Reverb has a dedicated 2 KiB buffer partitioned from the previous fixed zone,
-leaving 294 KiB for Doom. This revision is now installed and boots; read-only
-telemetry confirms its default controls. Physical editing acceptance remains
-pending.
+Source `783a03d` reuses the NES filter/Wah effect behind a SELECT bank switch: four
+net edges toggle retained Synth bank0/NES FX bank1. Synth preserves its previous
+VCO/VCF/VCA/reverb assignments and Original/Warm/Acid/Room presets. NES FX uses
+Dry/Warm/SlowWah/AcidSweep, clamped Bypass/LP/BP/HP algorithms and cutoff,
+resonance, LFO rate/depth knobs. Synth selectors wrap; NES selectors clamp.
+Bank selection preserves the music source; E4 toggles OPL/synth. Defaults are
+Original OPL, Synth bank and NES FX bypassed. Returning to Synth bypasses the
+NES effect while retaining both banks' values.
+
+NES FX processes the complete mono music including OPL drums before separate
+PCM effects and PB6/ADC4 master gain, retaining the -8192..8191 music headroom.
+The existing 294 KiB engine zone and 2 KiB synth room delay are unchanged.
+The shared effect adds one 36 B state and 9 B control structure, with no new
+audio queue or sample buffer. Rate preparation belongs to the task setter;
+the IRQ consumes prepared state with exact signed 32-bit split products.
+Details and presets: [AUDIO.md](AUDIO.md#nes-fx-bank-source-2026-10-08).
+
+This NES FX source has **not been flashed**. All 13 native contracts, including
+the exact original OPL reference, and the shared NES FX tests pass. The target
+build and archive/bank/source/XIP/DMA/descriptor/stack/RAM gates pass against
+the retained accepted profile. Its 567,344 B app (`4f3871be...`) leaves 17,612 B
+in flash; static RAM is 479,208 B, linker heap 44,332 B and reviewed startup
+reserve 4,320 B. The 1,480 B USB diagnostic chain plus 1,024 B SDK margin leaves
+56 B in the 2,560 B stack. Independent code audit passed; physical acceptance
+remains pending. The shared prepared NES API is board-project revision
+`2a577e8`. The installed app
+is still the 565,744 B `70553874...`/source `626d2612` checkpoint below.
 
 The historical measurements below describe their named builds; they do not
 establish performance or acceptance of the new live editor.
 
-Offline editor checks pass: 13 native contracts, exact original OPL reference,
+The installed 2026-10-07 editor's offline checks pass: 13 native contracts, exact original OPL reference,
 target engine/port compilation, flash/RAM/source closure and emitted USB stack
 gates. The app is 565,744 B with 19,212 B flash margin; reviewed startup reserve
 is 4,384 B. A Win32 1,200-tick route at 294 KiB reaches sector 52 beyond the
 first door, with active enemy damage and 89,484 B purgeable/free zone memory.
 This run uses the byte-equivalent staged WAD; it does not measure device FPS
 or establish whole-level traversal. Details: [candidate](TARGET_CANDIDATE.md).
+
+Before an incremental build, verify the private archive and banks against the
+last accepted manifest. The accepted archive is the 170,636 B
+`build/fine-assets/audio-door-fixed.fmd` (`197d7ccf...`); an old 117,590 B 8×8
+archive remained under `build/menu-ui-4k.fmd`. This filename drift must not be
+treated as a same-profile build. The corrected candidate's archive and banks
+match the retained manifest. Its 442 source hashes and 79 engine/7 port units
+are validated. Target IR uses only 32-bit arithmetic in prepared filter render;
+64-bit LFO division stays in task preparation. Shared formal tests cover
+226,084 filter samples against the exact 64-bit reference, all 128 LFO rates,
+stale-rate rejection and prepared/in-place/partition/single-sample paths.
+Candidate/stack Python checks pass 18/18. Offline request validation/model
+checks preserve boot/config/tail for a 139-sector update, directory last,
+prepared image SHA-256
+`d6884aae995f6e170c9ceb981783376eca154aec3746cf78f617d536fde2dcef`.
+No device I/O or flash was performed for this revision.
 
 ## Latest bench evidence (2026-10-07)
 

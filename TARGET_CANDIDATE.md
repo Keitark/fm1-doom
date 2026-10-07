@@ -1,23 +1,58 @@
 # FM-1 Doom UBOOT `app.bin` input
 
-## Current source revision (2026-10-07)
+## Current source revision (2026-10-08)
 
 The source retains E1M1 and current 4×4 world/enemy assets. Gameplay always
 uses the detailed 160×93 view; the 8×8 LCD presentation toggle is removed.
-Live encoder editing controls synth presets/algorithm, VCO detune, VCF cutoff,
-VCA contour and reverb. Original OPL remains the boot default. The fixed
-296 KiB allocation is partitioned into a 294 KiB Doom zone and a 2 KiB synth
-delay; the 4 KiB archive cache is unchanged. Source `626d2612` is installed and
+Source `783a03d` adds the shared NES filter/Wah effect with SELECT switching
+between retained Synth and NES FX banks. Synth editing keeps its previous
+VCO/VCF/VCA/reverb assignments; NES FX assigns cutoff, resonance and LFO
+rate/depth, with exact NES presets and Bypass/LP/BP/HP modes. Bank selection
+preserves the OPL/synth source; E4 remains its toggle. Original OPL, Synth bank
+and bypassed NES FX are the defaults. This new source has **not been flashed**.
+All 13 native contracts, including the exact original OPL reference, and shared
+NES FX tests pass. The corrected target build/profile and budget gates pass;
+independent code audit passed; physical acceptance remains pending. The current
+artifact below is an offline candidate, separate from the installed Oct7 image.
+
+The fixed 296 KiB allocation is partitioned into a 294 KiB Doom zone and a
+2 KiB synth delay; the 4 KiB archive cache is unchanged. Source `626d2612` is installed and
 boots with advancing game/audio telemetry. Its 139-sector update and complete
 1 MiB readback match image SHA-256 `a4c3fc49...`. Physical editing, speaker output
 and timing acceptance remain pending. Dated values below describe their named
 checkpoints; see [deployment evidence](DEPLOYMENT.md#live-editor-deployment-2026-10-07).
 
-### Verified live-editor artifact
+### Offline NES FX artifact (2026-10-08; unflashed)
 
 | Gate | Result |
 | --- | --- |
-| Plain UBOOT input | `build/target-candidate/app.bin`, 565,744 B |
+| Built Doom / shared board revisions | `783a03d` / `2a577e8` |
+| Plain UBOOT input | `build/target-candidate/app.bin`, 567,344 B |
+| App SHA-256 | `4f3871be83e4332f1f592178484d0b51ad27d0e341b2878bfa02ebb9615a6488` |
+| ELF SHA-256 | `3a6303ff0f0b5a46623a346bdb320823013a7a67b522cc4a1631704c1f7e87cf` |
+| App slot / remaining | 584,956 B / 17,612 B |
+| Static RAM: data + BSS | 26,928 + 452,280 = 479,208 B |
+| Linker heap / reviewed startup reserve | 44,332 B / 4,320 B; required 4,096 B |
+| USB stack / diagnostic chain / SDK margin | 2,560 / 1,480 / 1,024 B; 56 B remaining |
+| Source closure / compilation | 442 hashes; 79 engine and 7 port units |
+| Target gates | Archive/banks, XIP, DMA, descriptors, source, stack and RAM pass |
+| Native contracts | 13/13 pass, including exact original OPL reference |
+| Candidate/stack Python checks | 18/18 pass |
+| Prepared shared filter | 226,084 samples match exact 64-bit reference; all 128 LFO rates, stale rejection and buffer/partition paths pass |
+| IRQ arithmetic | Prepared-render target IR uses only 32-bit arithmetic; 64-bit LFO division stays in task preparation |
+| Prepared encoded-image SHA-256 | `d6884aae995f6e170c9ceb981783376eca154aec3746cf78f617d536fde2dcef` |
+| Offline update/restore validation | 139 sectors, directory last; boot/config/tail preserved |
+
+The 170,636 B archive and all sound/music/OPL banks match the retained accepted
+manifest. No device operation or new flash accompanies these build results.
+Independent audit passed. Hardware editing response, speaker/streaming quality,
+sustained DSP timing and 30 completed distinct frames/s remain open.
+
+### Last installed live-editor artifact (2026-10-07)
+
+| Gate | Result |
+| --- | --- |
+| Plain UBOOT input at this checkpoint | `build/target-candidate/app.bin`, 565,744 B |
 | App SHA-256 | `70553874c1d8dd2e89e1448d27fbf89b1d5476b8573f3a9cb1e89fa46cfd3d35` |
 | ELF SHA-256 | `56b7036a6d5f175e5dd519dbdf1243e20b96444170ecc45d14a5732a0f33f126` |
 | Built source revision | `626d261208c6a1b9ae12783da524ea50c173b24d` |
@@ -92,6 +127,25 @@ python tools/build_target_candidate.py build\menu-ui-4k.fmd --fm1-root F:\dev\fm
 The stage tool's `--silent` removes audio from the WAD. Sound and music are
 generated separately from the lawful source IWAD into private XIP banks;
 the shared IIS backend reads those banks without the FMD1 cache/inflater.
+
+### Incremental bench profile
+
+The retained archive matching the last accepted installed manifest is
+`build/fine-assets/audio-door-fixed.fmd`, 170,636 B, SHA-256
+`197d7ccfc475893a6a5b581ea63c51003c524aaa4c38096de370329f2fd2fe7f`.
+The complete accepted manifest is retained privately in
+`build/live-edit-target.log`; sound/music/OPL banks are in `build/sound-bank`,
+`build/music-original` and `build/opl-bank`. Check their content hashes before
+an incremental build or a profile comparison. The existing local
+`build/menu-ui-4k.fmd` was an older 117,590 B 8×8 archive. Reusing that filename
+does not establish the same assets. The reproduction commands above regenerate
+new assets and must be validated as their own closure.
+
+The correct retained archive input for the current bench is:
+
+```powershell
+python tools/build_target_candidate.py build\fine-assets\audio-door-fixed.fmd --fm1-root F:\dev\fm1 --music-bank build\music-original\music_score.c
+```
 
 The builder requires the pinned SDK and a reviewed local FM-1 boot baseline.
 It verifies every FMD1 block and CRC, checks that the exact archive bytes land

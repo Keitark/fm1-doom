@@ -15,6 +15,14 @@ visible gameplay, menus, movement, firing, music and physical master volume.
 Physical acceptance of the new controls, speaker output and timing remains
 pending. See [deployment evidence](DEPLOYMENT.md#live-editor-deployment-2026-10-07).
 
+The **2026-10-08 source `783a03d` adds the NES port's live filter/Wah effect**
+as a second control bank. This change has **not been flashed**; the installed app above
+still has the single synth editor. All 13 native contracts and the target build
+gates pass. The new offline app is **567,344 B** (`4f3871be...`), with 17,612 B
+flash margin and a 4,320 B reviewed startup reserve. Its private archive/banks
+match the accepted profile, and independent code audit passed. Physical
+acceptance remains pending.
+
 The current scope is **E1M1** with its complete original geometry. Gameplay uses
 all **160×93** rendered samples, scaled to **240×224**, with a **16-row HUD**.
 The engine buffer is 160×100. World/enemy assets retain 4×4 pixel blocks, the
@@ -22,11 +30,11 @@ pistol retains original detail, and the fist uses 2×2 asset blocks. These asset
 settings differ from screen resolution. The former 8×8 presentation mode and
 D♯4 view toggle have been removed from the source.
 
-Music boots in original DOS OPL mode, confirmed by read-only device telemetry.
-A switchable eight-voice synth now has
-live VCO, VCF, VCA and room-reverb controls. Original OPL output remains exact
-against the host reference; new control and delay-buffer regressions pass.
-Physical acceptance of the new controls remains pending. See [audio](AUDIO.md).
+Music boots in original DOS OPL mode, confirmed for the installed app by
+read-only telemetry. The eight-voice synth retains its VCO, VCF, VCA and room
+reverb controls. The new NES FX bank filters the complete music, including OPL
+drums; PCM gunshots and physical master volume retain their separate paths.
+Defaults are original OPL, Synth bank and NES FX bypassed. See [audio](AUDIO.md).
 
 The reported missing cold-boot USB was resolved by replacing the programmer
 cable with a normal USB data cable. Windows then exposed healthy COM5 and a
@@ -55,11 +63,17 @@ MIDI octave/transposition settings do not change the Doom controls.
 
 ### Live sound editing
 
-Turn PRESETS to Warm, Acid or Room to enable synth editing. Original selects
-the DOS OPL path. E4 toggles OPL/synth while retaining the last synth recipe and
+The new two-bank controls below describe the **unflashed 2026-10-08 source**.
+Turn SELECT one detent (four net contact edges) to switch between **Synth (0)**
+and **NES FX (1)**. Each bank retains its own settings. Selecting a bank does
+not change the OPL/synth music source; E4 remains the source toggle. Returning
+to Synth bypasses NES FX, retaining its values for the next selection.
+
+In the Synth bank, turn PRESETS to Warm, Acid or Room to enable synth editing.
+Original selects the DOS OPL path. E4 toggles OPL/synth while retaining the last synth recipe and
 knob settings. Turning knobs alone preserves the E4 mode choice.
 
-| Physical control | Assignment | Default / range |
+| Physical control | Synth bank assignment | Default / range |
 | --- | --- | --- |
 | PRESETS | Original, Warm, Acid, Room | Original / 0–3 |
 | ALGORITHM | Classic, Triangle, Pulse, Mixed band-pass | Classic / 0–3 |
@@ -69,11 +83,24 @@ knob settings. Turning knobs alone preserves the E4 mode choice.
 | KNOB4 | Small-room reverb wet amount | 0 / 0–127 |
 | Physical volume knob | Master music/effects gain through PB6/ADC4 | Follows the knob |
 
+| Physical control | NES FX bank assignment | Default / range |
+| --- | --- | --- |
+| PRESETS | Dry, Warm, SlowWah, AcidSweep | Dry / 0–3 |
+| ALGORITHM | Bypass, low-pass, band-pass, high-pass | Bypass / 0–3 |
+| KNOB1 | Filter cutoff | 112 / 80–5,000 Hz |
+| KNOB2 | Resonance | 0 / 0–127 |
+| KNOB3 | LFO rate | 19 / 0.1–12.8 Hz |
+| KNOB4 | LFO depth | 0 / 0–127 |
+
+NES FX presets and algorithm stop at their range ends; Synth selectors wrap.
+NES FX presets change the filter without selecting a different music source.
+The physical volume knob remains master gain in both banks.
+
 Warm keeps the existing melodic synth character; Acid raises the filter sweep;
 Room softens the filter and lengthens the envelope. Reverb affects the synth
 melody; original OPL drums and PCM effects retain their existing paths. Changes
-smooth without restarting notes. Read-only `DOOM EDIT` reports preset,
-algorithm, `vco`, `vcf`, `vca`, `reverb` and actual `synth_mode` over CDC.
+smooth without restarting notes. Read-only `DOOM EDIT` reports the active bank,
+preset/algorithm, its four parameters and actual `synth_mode` over CDC.
 
 ### Leaving the spawn area
 
@@ -153,10 +180,18 @@ python tools/compile_target_port.py --fm1-root F:\dev\fm1 --lowres
 python tools/build_target_candidate.py build\menu-ui-4k.fmd --fm1-root F:\dev\fm1 --music-bank build\music-original\music_score.c
 ```
 
+For incremental builds on the current bench, the retained accepted archive is
+`build/fine-assets/audio-door-fixed.fmd` (170,636 B, SHA-256 `197d7ccf...`). Verify
+that archive and all private banks against the last accepted manifest before
+building. An existing `build/menu-ui-4k.fmd` was found to be the older 8×8
+archive; its filename alone does not identify the current asset profile. The
+reproduction commands regenerate assets from the supplied IWAD.
+
 These commands compile/link/package locally. The private `app.bin` is the plain
 WL82 UBOOT input for a writer supporting SDK `-app app.bin`. The reviewed
 V14/v32 application allocation is **584,956 B**. The installed 565,744 B image
-leaves 19,212 B. Preserve the 4,096 B reviewed startup reserve and emitted USB
+leaves 19,212 B; the unflashed NES FX candidate is 567,344 B with 17,612 B
+remaining. Preserve the 4,096 B reviewed startup reserve and emitted USB
 stack gate. SDK aggregate `heap_free` is not the largest free block.
 See [candidate format and gates](TARGET_CANDIDATE.md) and
 [port audit](AUDIT.md).

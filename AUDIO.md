@@ -1,6 +1,73 @@
 # FM-1 Doom audio
 
-## Current source checkpoint: live sound controls
+## NES FX bank source (2026-10-08)
+
+Source `783a03d` adds the NES port's filter/Wah effect alongside the retained
+synth editor. It has **not been flashed**. All 13 native contracts pass,
+including the exact original OPL reference; shared NES FX tests also pass.
+Target build, accepted-profile comparison and budget gates pass. Independent
+code audit passed; hardware acceptance remains pending. The shared prepared
+NES API is board-project revision `2a577e8`.
+The installed firmware is still the `70553874...` image recorded below.
+
+SELECT switches Synth bank0/NES FX bank1 after four net contact edges. Each
+bank retains its own settings. Bank selection does not change the OPL/synth
+source; E4 remains its toggle. Returning to Synth bypasses NES FX while keeping
+its values. Boot defaults are Original OPL, Synth bank and bypassed NES FX.
+The Synth bank's presets, algorithm and VCO/VCF/VCA/reverb controls are unchanged.
+Synth selectors wrap; NES FX preset and algorithm selectors clamp at 0..3.
+
+| Control | NES FX assignment | Range |
+| --- | --- | --- |
+| PRESETS | Dry, Warm, SlowWah, AcidSweep | 0–3 |
+| ALGORITHM | Bypass, low-pass, band-pass, high-pass | 0–3 |
+| KNOB1 | Cutoff | Raw 0–127, logarithmic 80–5,000 Hz |
+| KNOB2 | Resonance | 0–127 |
+| KNOB3 | LFO rate | Raw 0–127, 0.1–12.8 Hz |
+| KNOB4 | LFO depth | 0–127 |
+
+The exact shared NES recipes are:
+
+| Preset | Algorithm | Cutoff | Resonance | Rate | Depth | Mix |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Dry | Bypass (0) | 112 | 0 | 19 | 0 | 127 |
+| Warm | Low-pass (1) | 92 | 24 | 9 | 0 | 127 |
+| SlowWah | Low-pass (1) | 76 | 60 | 9 | 72 | 127 |
+| AcidSweep | Band-pass (2) | 84 | 100 | 29 | 96 | 100 |
+
+NES FX processes the complete mono music, including OPL drums, before the
+independent PCM gunshot/effects mixer and physical master gain. The existing
+-8192..8191 music clamp retains effect headroom. The synth room effect still
+uses the same 2 KiB delay; NES FX adds one 36 B state and 9 B control structure,
+with no extra audio queue or sample buffer.
+
+The shared `fm1_nes_fx` setter prepares the LFO phase increment in task context,
+including its 64-bit division when rate changes. The IRQ uses only prepared
+state and exact signed 32-bit split products; its render contract excludes
+64-bit arithmetic, allocation, I/O and waits. Prepared-render target IR uses
+only 32-bit arithmetic; the 64-bit division remains in task preparation.
+Shared formal tests compare 226,084 samples with the exact 64-bit reference,
+all 128 LFO rates, stale-rate rejection and prepared/in-place/partition/single
+sample paths. These checks do not establish audible hardware response or IRQ
+deadlines. `DOOM EDIT` remains read-only: `bank=0` reports
+VCO/VCF/VCA/reverb and `bank=1` reports cutoff/resonance/rate/depth. Both report
+preset/algorithm and the actual `synth_mode` independently of the bank.
+
+Before comparing target profiles, verify the private archive and banks against
+the last accepted manifest. The correct retained archive is the 170,636 B
+`build/fine-assets/audio-door-fixed.fmd` (`197d7ccf...`); the old default filename
+contained an 8×8 archive. See [target profile](TARGET_CANDIDATE.md#incremental-bench-profile).
+
+The unflashed candidate is 567,344 B, app SHA-256 `4f3871be...`, with 17,612 B
+flash margin, 479,208 B static RAM, 44,332 B linker heap and 4,320 B reviewed
+startup reserve. The USB diagnostic chain is 1,480 B plus a 1,024 B SDK margin,
+leaving 56 B in its 2,560 B stack. Full hashes and build gates are recorded in
+[TARGET_CANDIDATE.md](TARGET_CANDIDATE.md#offline-nes-fx-artifact-2026-10-08-unflashed).
+The additional candidate/stack Python checks pass 18/18. Offline request
+validation preserves boot/config/tail with a 139-sector scope and directory
+last; it establishes no device write or new readback.
+
+## Last installed live editor (2026-10-07)
 
 The live editor from source `626d2612` is installed: **565,744 B**, app SHA-256
 `70553874...`, with complete image readback matching `a4c3fc49...`. After one
