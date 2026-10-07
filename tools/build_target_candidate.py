@@ -358,6 +358,7 @@ def main() -> int:
     sources += [audio_source, ROOT / "src/fm1_doom_music.c", ROOT / "src/fm1_doom_opl.c",
                 ROOT / "vendor/emu8950/emu8950.c",
                 fm1 / "firmware/nes/src/fm1_audio_queue.c",
+                fm1 / "firmware/nes/src/fm1_nes_fx.c",
                 fm1 / "firmware/nes/src/fm1_volume.c"]
     sources += [path for path, _ in private_banks.values()]
     sources += [usb / name for name in ("dma.c", "rx_channel.c", "boot_entry.c", "peripheral_logic.c")]

@@ -73,8 +73,9 @@ static USB_NOINLINE void edit_status(const fm1_doom_usb_protocol_io *io)
     memset(&status, 0, sizeof(status));
     io->get_status(io->context, &status);
     value = status.edit_controls;
-    snprintf(output, sizeof(output),
-             "DOOM EDIT preset=%u algorithm=%u vco=%u vcf=%u vca=%u reverb=%u synth_mode=%lu\n",
+    snprintf(output, sizeof(output), status.edit_bank
+             ? "DOOM EDIT bank=1 preset=%u algorithm=%u cutoff=%u resonance=%u rate=%u depth=%u synth_mode=%lu\n"
+             : "DOOM EDIT bank=0 preset=%u algorithm=%u vco=%u vcf=%u vca=%u reverb=%u synth_mode=%lu\n",
              (unsigned)(value >> 28 & 3u), (unsigned)(value >> 30),
              (unsigned)(value & 127u), (unsigned)(value >> 7 & 127u),
              (unsigned)(value >> 14 & 127u), (unsigned)(value >> 21 & 127u),

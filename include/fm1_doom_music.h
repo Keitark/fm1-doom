@@ -20,13 +20,21 @@ void fm1_doom_music_toggle_synth_mode(void);
 typedef struct {
     uint8_t preset, algorithm, knob[4];
 } fm1_doom_music_edit;
+enum { FM1_DOOM_EDIT_SYNTH, FM1_DOOM_EDIT_NES_FX };
 #define FM1_DOOM_MUSIC_EDIT_DEFAULT {0, 0, {16, 72, 32, 0}}
+#define FM1_DOOM_NES_FX_EDIT_DEFAULT {0, 0, {112, 0, 19, 0}}
+/* SELECT chooses the control bank, retaining each bank's parameters and the
+ * current OPL/synth source. NES FX treats the complete mono music signal;
+ * its knobs are cutoff, resonance, LFO rate and depth. PCM effects are separate. */
+void fm1_doom_music_set_edit_bank(unsigned bank);
+unsigned fm1_doom_music_get_edit_bank(void);
 /* Caller holds the same sound lock used by rendering. Presets: Original,
  * Warm, Acid, Room. Selecting a different preset changes OPL/synth mode;
  * editing knobs alone preserves the legacy E4 mode toggle. Algorithms 0..3
  * choose classic, triangle, pulse and mixed band-pass synthesis. Knobs 0..3
  * control VCO detune, VCF cutoff, VCA attack/release and room wet amount.
- * Set/get controls never allocate or restart notes. */
+ * In the NES FX bank presets are Dry, Warm, Slow Wah, Acid Sweep; algorithms
+ * are Bypass, LP, BP, HP. Set/get controls never allocate or restart notes. */
 void fm1_doom_music_set_edit_controls(const fm1_doom_music_edit *edit);
 void fm1_doom_music_get_edit_controls(fm1_doom_music_edit *edit);
 void fm1_doom_music_reset_edit_controls(void);

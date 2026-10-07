@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(fm1_doom C)
 set(CMAKE_C_STANDARD 99)
+set(FM1_DOOM_BOARD_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../fm1/firmware/nes"
+    CACHE PATH "FM-1 NES support source directory")
 if(FM1_DOOM_ENGINE_DIR)
   file(TO_CMAKE_PATH "${FM1_DOOM_ENGINE_DIR}" DOOM_SRC)
 else()
@@ -24,8 +26,9 @@ enable_testing()
 add_executable(port_tests tests/port_tests.c)
 target_link_libraries(port_tests PRIVATE fm1_doom_port)
 add_test(NAME port_contract COMMAND port_tests)
-add_executable(edit_tests tests/edit_tests.c src/fm1_doom_edit.c)
-target_include_directories(edit_tests PRIVATE include)
+add_executable(edit_tests tests/edit_tests.c src/fm1_doom_edit.c
+  "${FM1_DOOM_BOARD_ROOT}/src/fm1_nes_fx.c")
+target_include_directories(edit_tests PRIVATE include "${FM1_DOOM_BOARD_ROOT}/include")
 add_test(NAME live_sound_edit_contract COMMAND edit_tests)
 add_library(fm1_doom_archive STATIC src/fm1_doom_archive.c)
 target_include_directories(fm1_doom_archive PUBLIC include)
@@ -63,8 +66,6 @@ target_compile_definitions(usb_audio_target_tests PRIVATE
 add_test(NAME target_usb_audio_adapter_contract COMMAND usb_audio_target_tests)
 
 set(FM1_DOOM_SOUND_BANK_SOURCE "" CACHE FILEPATH "Private generated FM-1 SFX bank for host sound tests")
-set(FM1_DOOM_BOARD_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../fm1/firmware/nes"
-    CACHE PATH "FM-1 NES support source directory")
 if(FM1_DOOM_SOUND_BANK_SOURCE)
   if(NOT EXISTS "${FM1_DOOM_SOUND_BANK_SOURCE}" OR
      NOT EXISTS "${FM1_DOOM_BOARD_ROOT}/src/fm1_audio_queue.c")
@@ -97,15 +98,19 @@ if(FM1_DOOM_MUSIC_BANK_SOURCE)
   endif()
   add_executable(music_score_tests tests/music_score_tests.c src/fm1_doom_music.c
     src/fm1_doom_opl.c vendor/emu8950/emu8950.c
+    "${FM1_DOOM_BOARD_ROOT}/src/fm1_nes_fx.c"
     "${FM1_DOOM_MUSIC_BANK_SOURCE}" "${FM1_DOOM_GENMIDI_BANK_SOURCE}")
-  target_include_directories(music_score_tests PRIVATE include vendor/emu8950 "${DOOM_SRC}")
+  target_include_directories(music_score_tests PRIVATE include vendor/emu8950 "${DOOM_SRC}"
+    "${FM1_DOOM_BOARD_ROOT}/include")
   target_compile_definitions(music_score_tests PRIVATE FM1_TARGET_PI32V2=1 _CRT_SECURE_NO_WARNINGS)
   add_test(NAME target_music_score_contract COMMAND music_score_tests)
   if(FM1_DOOM_OPL_REFERENCE_SOURCE)
     add_executable(opl_reference_tests tests/opl_reference_tests.c src/fm1_doom_music.c
       src/fm1_doom_opl.c vendor/emu8950/emu8950.c
+      "${FM1_DOOM_BOARD_ROOT}/src/fm1_nes_fx.c"
       "${FM1_DOOM_MUSIC_BANK_SOURCE}" "${FM1_DOOM_GENMIDI_BANK_SOURCE}" "${FM1_DOOM_OPL_REFERENCE_SOURCE}")
-    target_include_directories(opl_reference_tests PRIVATE include vendor/emu8950 "${DOOM_SRC}")
+    target_include_directories(opl_reference_tests PRIVATE include vendor/emu8950 "${DOOM_SRC}"
+      "${FM1_DOOM_BOARD_ROOT}/include")
     target_compile_definitions(opl_reference_tests PRIVATE FM1_TARGET_PI32V2=1 FM1_DOOM_OPL_TEST=1 _CRT_SECURE_NO_WARNINGS)
     add_test(NAME original_opl_reference_contract COMMAND opl_reference_tests)
   endif()

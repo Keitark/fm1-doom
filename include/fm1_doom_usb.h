@@ -26,6 +26,7 @@ struct fm1_doom_usb_status {
     uint32_t volume_samples, volume_target;
     uint32_t synth_mode;
     uint32_t edit_controls; /* Four7-bit knobs, Preset2-bit, Algorithm2-bit. */
+    uint32_t edit_bank; /* 0: Synth controls; 1: NES filter/LFO controls. */
     uint32_t speaker_muted;
     int heap_free;
 };

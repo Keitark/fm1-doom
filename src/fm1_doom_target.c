@@ -69,6 +69,7 @@ static fm1_encoders encoders;
 static uint32_t encoder_sequence;
 static fm1_doom_edit sound_edit;
 static volatile uint32_t edit_snapshot = 16u | (72u << 7) | (32u << 14);
+static volatile uint32_t edit_bank_snapshot;
 static spinlock_t input_lock;
 static unsigned input_irq_enabled, input_irq_registered, input_retries;
 static int scan_timer;
@@ -118,7 +119,13 @@ void fm1_doom_usb_get_status(struct fm1_doom_usb_status *status)
     status->scan_failure_con = scanner.failure.con;
     status->scan_failure_dma_count = scanner.failure.dma_count;
     status->coarse_gameplay = 0; /* Retained wire field: detailed presentation only. */
-    status->edit_controls = edit_snapshot;
+    {
+        unsigned flags;
+        local_irq_save(flags);
+        status->edit_controls = edit_snapshot;
+        status->edit_bank = edit_bank_snapshot;
+        local_irq_restore(flags);
+    }
     /* Best-effort scalar telemetry must never wait for the CPU1 renderer.
      * These getters do no traversal, allocation or peripheral access. */
     fm1_doom_sound_get_diagnostics(&sound);
@@ -476,10 +483,14 @@ static void update_sound_edit(void)
     input_release(flags);
     if (!fm1_doom_edit_update(&sound_edit, counts)) return;
     flags = fm1_doom_sound_lock();
+    fm1_doom_music_set_edit_bank(sound_edit.bank);
     fm1_doom_music_set_edit_controls(&sound_edit.value);
     fm1_doom_sound_unlock(flags);
+    local_irq_save(flags);
     edit_snapshot = fm1_doom_edit_pack(&sound_edit.value);
+    edit_bank_snapshot = sound_edit.bank;
     __asm__ volatile("csync" ::: "memory");
+    local_irq_restore(flags);
 }
 
 static int write_rows(void *unused, unsigned y, unsigned rows, const uint8_t *pixels)

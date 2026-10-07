@@ -26,25 +26,154 @@ static int test_defaults_reset_all_encoder_state(void)
     fm1_doom_edit_init(&edit);
     CHECK(edit.value.preset == 0 && edit.value.algorithm == 0);
     CHECK(!memcmp(edit.value.knob, knobs, sizeof(knobs)));
-    CHECK(edit.algorithm_edges == 0 && edit.preset_edges == 0);
+    CHECK(edit.bank == FM1_DOOM_EDIT_SYNTH);
+    CHECK(edit.algorithm_edges == 0 && edit.preset_edges == 0 && edit.select_edges == 0);
     for (i = 0; i < 7; ++i) CHECK(edit.previous[i] == 0);
     CHECK(!fm1_doom_edit_update(&edit, counts));
     return 0;
 }
 
-static int test_select_encoder_does_not_change_sound_controls(void)
+static int test_select_requires_four_net_edges_and_wraps_both_banks(void)
 {
     fm1_doom_edit edit;
-    fm1_doom_music_edit before;
+    static const fm1_doom_music_edit synth = FM1_DOOM_MUSIC_EDIT_DEFAULT;
+    static const fm1_doom_music_edit nes = FM1_DOOM_NES_FX_EDIT_DEFAULT;
     int32_t counts[7] = {0};
     fm1_doom_edit_init(&edit);
-    before = edit.value;
-    counts[0] = INT32_MAX;
+    counts[0] = 3;
     CHECK(!fm1_doom_edit_update(&edit, counts));
-    CHECK(!memcmp(&edit.value, &before, sizeof(before)));
+    CHECK(edit.bank == FM1_DOOM_EDIT_SYNTH && edit.select_edges == 3);
+    counts[0] = 0;
+    CHECK(!fm1_doom_edit_update(&edit, counts));
+    CHECK(edit.bank == FM1_DOOM_EDIT_SYNTH && edit.select_edges == 0);
+    counts[0] = 4;
+    CHECK(fm1_doom_edit_update(&edit, counts));
+    CHECK(edit.bank == FM1_DOOM_EDIT_NES_FX && edit.select_edges == 0);
+    CHECK(!memcmp(&edit.value, &nes, sizeof(nes)));
+    CHECK(!fm1_doom_edit_update(&edit, counts));
+    counts[0] = 8;
+    CHECK(fm1_doom_edit_update(&edit, counts));
+    CHECK(edit.bank == FM1_DOOM_EDIT_SYNTH && !memcmp(&edit.value, &synth, sizeof(synth)));
+    counts[0] = 4;
+    CHECK(fm1_doom_edit_update(&edit, counts));
+    CHECK(edit.bank == FM1_DOOM_EDIT_NES_FX);
+    counts[0] = 0;
+    CHECK(fm1_doom_edit_update(&edit, counts));
+    CHECK(edit.bank == FM1_DOOM_EDIT_SYNTH);
+    return 0;
+}
+
+static int test_select_preserves_independent_controls_in_both_banks(void)
+{
+    fm1_doom_edit edit;
+    fm1_doom_music_edit synth, nes;
+    int32_t counts[7] = {0};
+    fm1_doom_edit_init(&edit);
+    counts[1] = 4; counts[2] = 7; counts[6] = 8;
+    CHECK(fm1_doom_edit_update(&edit, counts));
+    synth = edit.value;
+    counts[0] = 4;
+    CHECK(fm1_doom_edit_update(&edit, counts));
+    CHECK(edit.bank == FM1_DOOM_EDIT_NES_FX && edit.value.preset == 0);
+    counts[1] += 8; counts[3] = 5; counts[5] = 7;
+    CHECK(fm1_doom_edit_update(&edit, counts));
+    nes = edit.value;
+    counts[0] = 8;
+    CHECK(fm1_doom_edit_update(&edit, counts));
+    CHECK(edit.bank == FM1_DOOM_EDIT_SYNTH && !memcmp(&edit.value, &synth, sizeof(synth)));
+    counts[0] = 12;
+    CHECK(fm1_doom_edit_update(&edit, counts));
+    CHECK(edit.bank == FM1_DOOM_EDIT_NES_FX && !memcmp(&edit.value, &nes, sizeof(nes)));
+    return 0;
+}
+
+static int test_select_retains_bounded_backlog_and_int32_extremes(void)
+{
+    fm1_doom_edit edit;
+    int32_t counts[7] = {19};
+    unsigned step;
+    fm1_doom_edit_init(&edit);
+    for (step = 0; step < 3; ++step) {
+        CHECK(!fm1_doom_edit_update(&edit, counts));
+        CHECK(edit.previous[0] == (step == 0 ? 8 : step == 1 ? 16 : 19));
+        CHECK(edit.bank == FM1_DOOM_EDIT_SYNTH);
+        CHECK(edit.select_edges == (step == 2 ? 3 : 0));
+    }
+    counts[0] = 20;
+    CHECK(fm1_doom_edit_update(&edit, counts));
+    CHECK(edit.bank == FM1_DOOM_EDIT_NES_FX && edit.select_edges == 0);
+    fm1_doom_edit_init(&edit);
+    edit.previous[0] = INT32_MAX - 2; counts[0] = INT32_MAX;
+    CHECK(!fm1_doom_edit_update(&edit, counts));
+    CHECK(edit.previous[0] == INT32_MAX && edit.select_edges == 2);
     counts[0] = INT32_MIN;
+    CHECK(fm1_doom_edit_update(&edit, counts));
+    CHECK(edit.previous[0] == INT32_MAX - 8 && edit.select_edges == -2);
+    CHECK(edit.bank == FM1_DOOM_EDIT_NES_FX);
+    return 0;
+}
+
+static int test_nes_presets_load_the_documented_controls_and_clamp(void)
+{
+    static const fm1_doom_music_edit presets[] = {
+        {0, 0, {112, 0, 19, 0}}, {1, 1, {92, 24, 9, 0}},
+        {2, 1, {76, 60, 9, 72}}, {3, 2, {84, 100, 29, 96}}
+    };
+    fm1_doom_edit edit;
+    int32_t counts[7] = {4};
+    unsigned step;
+    fm1_doom_edit_init(&edit);
+    CHECK(fm1_doom_edit_update(&edit, counts));
+    CHECK(!memcmp(&edit.value, presets, sizeof(edit.value)));
+    for (step = 1; step < 4; ++step) {
+        counts[6] += 3;
+        CHECK(!fm1_doom_edit_update(&edit, counts));
+        CHECK(edit.value.preset == step - 1);
+        counts[6] += 1;
+        CHECK(fm1_doom_edit_update(&edit, counts));
+        CHECK(!memcmp(&edit.value, presets + step, sizeof(edit.value)));
+    }
+    counts[6] += 4;
     CHECK(!fm1_doom_edit_update(&edit, counts));
-    CHECK(!memcmp(&edit.value, &before, sizeof(before)));
+    CHECK(!memcmp(&edit.value, presets + 3, sizeof(edit.value)));
+    for (step = 3; step > 0; --step) {
+        counts[6] -= 4;
+        CHECK(fm1_doom_edit_update(&edit, counts));
+        CHECK(!memcmp(&edit.value, presets + step - 1, sizeof(edit.value)));
+    }
+    counts[6] -= 4;
+    CHECK(!fm1_doom_edit_update(&edit, counts));
+    CHECK(!memcmp(&edit.value, presets, sizeof(edit.value)));
+    return 0;
+}
+
+static int test_nes_algorithm_clamps_and_knobs_consume_eight_edge_backlog(void)
+{
+    static const uint8_t knobs[] = {112, 0, 19, 0};
+    fm1_doom_edit edit;
+    int32_t counts[7] = {4};
+    unsigned i, step;
+    fm1_doom_edit_init(&edit);
+    CHECK(fm1_doom_edit_update(&edit, counts));
+    counts[1] = -4;
+    CHECK(!fm1_doom_edit_update(&edit, counts));
+    CHECK(edit.value.algorithm == 0 && edit.algorithm_edges == 0);
+    for (step = 1; step <= 4; ++step) {
+        counts[1] += 4;
+        CHECK(fm1_doom_edit_update(&edit, counts) == (step < 4));
+        CHECK(edit.value.algorithm == (step < 4 ? step : 3));
+    }
+    for (i = 2; i < 6; ++i) counts[i] = 19;
+    for (step = 0; step < 3; ++step) {
+        unsigned consumed = step == 0 ? 8 : step == 1 ? 16 : 19;
+        CHECK(fm1_doom_edit_update(&edit, counts));
+        for (i = 0; i < 4; ++i) {
+            unsigned value = knobs[i] + consumed;
+            CHECK(edit.previous[i + 2] == (int32_t)consumed);
+            CHECK(edit.value.knob[i] == (value > 127 ? 127 : value));
+        }
+    }
+    CHECK(!fm1_doom_edit_update(&edit, counts));
     return 0;
 }
 
@@ -287,7 +416,11 @@ static int test_pack_masks_field_widths_without_mutating_controls(void)
 int main(void)
 {
     CHECK(test_defaults_reset_all_encoder_state() == 0);
-    CHECK(test_select_encoder_does_not_change_sound_controls() == 0);
+    CHECK(test_select_requires_four_net_edges_and_wraps_both_banks() == 0);
+    CHECK(test_select_preserves_independent_controls_in_both_banks() == 0);
+    CHECK(test_select_retains_bounded_backlog_and_int32_extremes() == 0);
+    CHECK(test_nes_presets_load_the_documented_controls_and_clamp() == 0);
+    CHECK(test_nes_algorithm_clamps_and_knobs_consume_eight_edge_backlog() == 0);
     CHECK(test_selectors_require_four_edges_per_detent() == 0);
     CHECK(test_selectors_wrap_in_both_directions() == 0);
     CHECK(test_reversing_partial_detents_cancels_the_remainder() == 0);

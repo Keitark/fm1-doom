@@ -219,6 +219,66 @@ static int music_monitor_fragment_timeout_restores_full_test(fake_usb *fake, fm1
     return 0;
 }
 
+static int synth_edit_status_preserves_named_fields_test(fake_usb *fake,
+                                                        fm1_doom_usb_protocol *protocol,
+                                                        const fm1_doom_usb_protocol_io *io)
+{
+    memset(fake, 0, sizeof(*fake));fm1_doom_usb_protocol_reset(protocol);
+    fake->status.edit_controls = 16u | (72u << 7) | (32u << 14);
+    feed(protocol, "DOOM ED", 222, io);
+    CHECK(!fake->used);
+    feed(protocol, "IT\n", 222, io);
+    CHECK(!strcmp(fake->output,
+          "DOOM EDIT bank=0 preset=0 algorithm=0 vco=16 vcf=72 vca=32 reverb=0 synth_mode=0\n"));
+    CHECK(!fake->stop_requests && !fake->arm_calls && !fake->monitor_requests && !fake->mute_requests);
+    return 0;
+}
+
+static int synth_edit_status_masks_packed_field_widths_test(fake_usb *fake,
+                                                          fm1_doom_usb_protocol *protocol,
+                                                          const fm1_doom_usb_protocol_io *io)
+{
+    memset(fake, 0, sizeof(*fake));fm1_doom_usb_protocol_reset(protocol);
+    fake->status.edit_controls = UINT32_MAX;
+    fake->status.synth_mode = 1;
+    feed(protocol, "DOOM EDIT\n", 222, io);
+    CHECK(!strcmp(fake->output,
+          "DOOM EDIT bank=0 preset=3 algorithm=3 vco=127 vcf=127 vca=127 reverb=127 synth_mode=1\n"));
+    CHECK(!fake->stop_requests && !fake->arm_calls && !fake->monitor_requests && !fake->mute_requests);
+    return 0;
+}
+
+static int nes_edit_status_names_the_filter_and_lfo_controls_test(fake_usb *fake,
+                                                                fm1_doom_usb_protocol *protocol,
+                                                                const fm1_doom_usb_protocol_io *io)
+{
+    memset(fake, 0, sizeof(*fake));fm1_doom_usb_protocol_reset(protocol);
+    fake->status.edit_bank = FM1_DOOM_EDIT_NES_FX;
+    fake->status.edit_controls = 84u | (100u << 7) | (29u << 14) | (96u << 21)
+                               | (3u << 28) | (2u << 30);
+    fake->status.synth_mode = 1;
+    feed(protocol, "DOOM EDIT\n", 222, io);
+    CHECK(!strcmp(fake->output,
+          "DOOM EDIT bank=1 preset=3 algorithm=2 cutoff=84 resonance=100 rate=29 depth=96 synth_mode=1\n"));
+    CHECK(!strstr(fake->output, "vco=") && !strstr(fake->output, "reverb="));
+    CHECK(!fake->stop_requests && !fake->arm_calls && !fake->monitor_requests && !fake->mute_requests);
+    return 0;
+}
+
+static int nes_edit_status_masks_packed_fields_independently_of_source_test(fake_usb *fake,
+                                                                          fm1_doom_usb_protocol *protocol,
+                                                                          const fm1_doom_usb_protocol_io *io)
+{
+    memset(fake, 0, sizeof(*fake));fm1_doom_usb_protocol_reset(protocol);
+    fake->status.edit_bank = FM1_DOOM_EDIT_NES_FX;
+    fake->status.edit_controls = UINT32_MAX;
+    feed(protocol, "DOOM EDIT\n", 222, io);
+    CHECK(!strcmp(fake->output,
+          "DOOM EDIT bank=1 preset=3 algorithm=3 cutoff=127 resonance=127 rate=127 depth=127 synth_mode=0\n"));
+    CHECK(!fake->stop_requests && !fake->arm_calls && !fake->monitor_requests && !fake->mute_requests);
+    return 0;
+}
+
 int main(void)
 {
     fake_usb fake = {0};
@@ -237,6 +297,10 @@ int main(void)
     CHECK(!music_monitor_full_cancels_deadline_test(&fake, &protocol, &io));
     CHECK(!music_monitor_new_command_restarts_deadline_test(&fake, &protocol, &io));
     CHECK(!music_monitor_fragment_timeout_restores_full_test(&fake, &protocol, &io));
+    CHECK(!synth_edit_status_preserves_named_fields_test(&fake, &protocol, &io));
+    CHECK(!synth_edit_status_masks_packed_field_widths_test(&fake, &protocol, &io));
+    CHECK(!nes_edit_status_names_the_filter_and_lfo_controls_test(&fake, &protocol, &io));
+    CHECK(!nes_edit_status_masks_packed_fields_independently_of_source_test(&fake, &protocol, &io));
     memset(&fake, 0, sizeof(fake));
     fm1_doom_usb_protocol_reset(&protocol);
     feed(&protocol, "HE", 100, &io);
@@ -369,21 +433,6 @@ int main(void)
     CHECK(!fake.volume_queries);
     feed(&protocol, "DOOM AUDIO\r\n", 222, &io);
     CHECK(strstr(fake.output, "ERR LINE ABORTED\n"));
-
-    memset(&fake, 0, sizeof(fake));
-    fake.status.edit_controls = 16u | (72u << 7) | (32u << 14);
-    feed(&protocol, "DOOM ED", 222, &io);
-    CHECK(!fake.used);
-    feed(&protocol, "IT\n", 222, &io);
-    CHECK(!strcmp(fake.output,
-          "DOOM EDIT preset=0 algorithm=0 vco=16 vcf=72 vca=32 reverb=0 synth_mode=0\n"));
-    memset(&fake, 0, sizeof(fake));
-    fake.status.edit_controls = UINT32_MAX;
-    fake.status.synth_mode = 1;
-    feed(&protocol, "DOOM EDIT\n", 222, &io);
-    CHECK(!strcmp(fake.output,
-          "DOOM EDIT preset=3 algorithm=3 vco=127 vcf=127 vca=127 reverb=127 synth_mode=1\n"));
-    CHECK(!fake.stop_requests && !fake.arm_calls && !fake.monitor_requests && !fake.mute_requests);
 
     memset(&fake, 0, sizeof(fake));
     fake.volume.now_ms = UINT32_MAX;

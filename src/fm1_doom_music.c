@@ -1,5 +1,6 @@
 #include "fm1_doom_music.h"
 #include "fm1_doom_opl.h"
+#include "fm1_nes_fx.h"
 #include <string.h>
 
 enum {TICK_FRAMES=315, STACK_SIZE=16, MAX_EVENTS_PER_TICK=128};
@@ -28,6 +29,10 @@ static struct {
 static uint8_t synth_mode;
 static uint8_t monitor_mode;
 static fm1_doom_music_edit edit_controls=FM1_DOOM_MUSIC_EDIT_DEFAULT;
+static fm1_doom_music_edit nes_edit_controls=FM1_DOOM_NES_FX_EDIT_DEFAULT;
+static uint8_t edit_bank;
+static fm1_fx_controls nes_controls={0,112,0,19,0,127,0,0,0};
+static fm1_fx_state nes_state;
 static uint8_t last_synth_preset=1;
 typedef struct {
     uint16_t detune,cutoff,damping,attack,release,wet,band_mix,contour;
@@ -124,14 +129,37 @@ void fm1_doom_music_set_edit_controls(const fm1_doom_music_edit *edit)
     if(bounded.preset>3)bounded.preset=3;
     if(bounded.algorithm>3)bounded.algorithm=3;
     for(i=0;i<4;i++)if(bounded.knob[i]>127)bounded.knob[i]=127;
+    if(edit_bank==FM1_DOOM_EDIT_NES_FX){
+        nes_edit_controls=bounded;
+        nes_controls.mode=bounded.algorithm;
+        nes_controls.cutoff=bounded.knob[0];nes_controls.resonance=bounded.knob[1];
+        nes_controls.rate=bounded.knob[2];nes_controls.depth=bounded.knob[3];
+        nes_controls.preset=bounded.preset;nes_controls.mix=bounded.preset==3?100:127;
+        fm1_fx_prepare(&nes_state,&nes_controls);
+        return;
+    }
     changed=bounded.preset!=edit_controls.preset;edit_controls=bounded;
     if(bounded.preset)last_synth_preset=bounded.preset;
     if(changed)fm1_doom_music_set_synth_mode(bounded.preset!=0);
 }
-void fm1_doom_music_get_edit_controls(fm1_doom_music_edit *edit){if(edit)*edit=edit_controls;}
+void fm1_doom_music_set_edit_bank(unsigned bank)
+{
+    edit_bank=(uint8_t)(bank==FM1_DOOM_EDIT_NES_FX);
+    nes_controls.mode=edit_bank?nes_edit_controls.algorithm:FM1_FX_BYPASS;
+    fm1_fx_prepare(&nes_state,&nes_controls);
+}
+unsigned fm1_doom_music_get_edit_bank(void){return edit_bank;}
+void fm1_doom_music_get_edit_controls(fm1_doom_music_edit *edit)
+{
+    if(edit)*edit=edit_bank?nes_edit_controls:edit_controls;
+}
 void fm1_doom_music_reset_edit_controls(void)
 {
     static const fm1_doom_music_edit defaults=FM1_DOOM_MUSIC_EDIT_DEFAULT;
+    static const fm1_doom_music_edit nes_defaults=FM1_DOOM_NES_FX_EDIT_DEFAULT;
+    edit_bank=0;nes_edit_controls=nes_defaults;
+    fm1_fx_controls_reset(&nes_controls);fm1_fx_reset(&nes_state);
+    fm1_fx_prepare(&nes_state,&nes_controls);
     fm1_doom_music_set_edit_controls(&defaults);last_synth_preset=1;fm1_doom_music_set_synth_mode(0);
 }
 static void synth_reset(void)
@@ -139,6 +167,7 @@ static void synth_reset(void)
     memset(&synth,0,sizeof(synth));synth_restart();synth.blend=synth_mode?256:0;
     parameters=synth_targets();memset(algorithm_weights,0,sizeof(algorithm_weights));
     algorithm_weights[edit_controls.algorithm]=256;room_reset();
+    fm1_fx_reset(&nes_state);fm1_fx_prepare(&nes_state,&nes_controls);
 }
 static void synth_event(unsigned kind,unsigned ch,unsigned a,unsigned b)
 {
@@ -373,6 +402,22 @@ static void tick(void)
 
 static int16_t clip(int value){return (int16_t)(value>8191?8191:value<-8192?-8192:value);}
 
+static int16_t music_fx(int16_t sample)
+{
+    /* The complete OPL/synth music is mono. Control publication prepares the
+     * rate in task context; this path has no allocation, waits or 64-bit math.
+     * SFX mixing and physical master gain happen later in the sound backend. */
+    if(nes_controls.mode || nes_state.wet){
+        int16_t filtered=sample;
+        if(!fm1_fx_process_prepared(&nes_state,&nes_controls,&sample,&filtered,1))
+            sample=clip(filtered); /* Retain the existing gunshot headroom. */
+    }else{
+        nes_state.phase+=nes_state.phase_increment;
+        nes_state.mode=FM1_FX_BYPASS;nes_state.low=nes_state.band=0;
+    }
+    return sample;
+}
+
 void fm1_doom_music_sample_stereo(int16_t *left,int16_t *right)
 {
     int sample,analog;int16_t full,drums;
@@ -389,7 +434,7 @@ void fm1_doom_music_sample_stereo(int16_t *left,int16_t *right)
      * when the user switches back, through the existing short crossfade. */
     if(!synth_mode && !synth.blend && !monitor_mode){
         sample=(int)fm1_doom_opl_sample()*4;
-        *left=*right=music.master?clip(sample):0;
+        *left=*right=music.master?music_fx(clip(sample)):0;
         return;
     }
     /* DOS OPL2 is mono. Original DMX music-volume and GENMIDI operator-level
@@ -405,7 +450,7 @@ void fm1_doom_music_sample_stereo(int16_t *left,int16_t *right)
         sample=((int)drums*4*(256-(int)synth.blend)+(int)drums*2*(int)synth.blend)/256;
     else
         sample=((int)full*4*(256-(int)synth.blend)+(analog+(int)drums*2)*(int)synth.blend)/256;
-    *left=*right=music.master?clip(sample):0;
+    *left=*right=music.master?music_fx(clip(sample)):0;
 }
 int32_t fm1_doom_music_sample(void){int16_t l,r;fm1_doom_music_sample_stereo(&l,&r);return ((int32_t)l+r)/2;}
 void fm1_doom_music_get_diagnostics(fm1_doom_music_diagnostics *d)
