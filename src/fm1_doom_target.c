@@ -58,7 +58,9 @@ volatile uint32_t fm1_doom_stage, fm1_doom_frames, fm1_doom_last_frame_ms;
 volatile uint32_t fm1_doom_max_frame_interval_ms, fm1_doom_slow_frames;
 volatile int fm1_doom_fault;
 volatile int fm1_doom_key_error;
-char fm1_doom_error_message[256];
+/* Reclaim the previous 64 B allocator capacity at its 4 KiB growth boundary.
+ * Fatal diagnostics truncate to 191 characters plus the terminating NUL. */
+char fm1_doom_error_message[192];
 static volatile unsigned stop_requested, stopped;
 static spinlock_t frame_lock;
 static fm1_doom_usb_frame_control frame_capture;
@@ -98,8 +100,10 @@ void fm1_doom_usb_get_status(struct fm1_doom_usb_status *status)
     status->key_error = fm1_doom_key_error;
     status->sys_hz = clk_get("sys");
     status->lsb_hz = clk_get("lsb");
-    memcpy(status->error_message, fm1_doom_error_message, sizeof(status->error_message));
-    status->error_message[sizeof(status->error_message) - 1u] = 0;
+    memcpy(status->error_message, fm1_doom_error_message, sizeof(fm1_doom_error_message));
+    memset(status->error_message + sizeof(fm1_doom_error_message), 0,
+           sizeof(status->error_message) - sizeof(fm1_doom_error_message));
+    status->error_message[sizeof(fm1_doom_error_message) - 1u] = 0;
     status->now_ms = timer_get_ms();
     status->tick_entered = trace_tick_entered;
     status->tick_completed = trace_tick_completed;

@@ -6,7 +6,16 @@ The **original Doom engine** on the M-VAVE FM-1, based on
 
 ## Current checkpoint
 
-The live sound editor from source `626d2612` is installed: **565,744 B**, app
+The remote NES FX image `d6884aae...` completed sector verification and a full
+1 MiB readback, but remains blank/frozen after one manual cold start. Offline
+audit found a concrete allocator-capacity regression: its maximum reported
+used bound is 16 B below usage measured in the previous working image. A
+bounded diagnostic-storage correction restores the earlier allocator capacity
+in a freshly built private candidate; its page-aware gate passes. Hardware
+acceptance remains pending. See the
+[allocator audit](ALLOCATOR_CAPACITY_AUDIT.md).
+
+The earlier live sound editor from source `626d2612` ran: **565,744 B**, app
 SHA-256 `70553874...`. All 139 application sectors and the complete 1 MiB image were
 readback-verified. One reset reached `DOOM-FM1/1`, stage 4/fault 0, advancing
 gameplay and audio, and zero LCD/key errors. RAM and emitted USB stack gates
@@ -16,12 +25,12 @@ Physical acceptance of the new controls, speaker output and timing remains
 pending. See [deployment evidence](DEPLOYMENT.md#live-editor-deployment-2026-10-07).
 
 The **2026-10-08 source `783a03d` adds the NES port's live filter/Wah effect**
-as a second control bank. This change has **not been flashed**; the installed app above
-still has the single synth editor. All 13 native contracts and the target build
-gates pass. The new offline app is **567,344 B** (`4f3871be...`), with 17,612 B
-flash margin and a 4,320 B reviewed startup reserve. Its private archive/banks
-match the accepted profile, and independent code audit passed. Physical
-acceptance remains pending.
+as a second control bank. Its **567,344 B** application (`4f3871be...`) has
+17,612 B flash margin and passed the former raw startup-reserve check, which
+missed the allocator page-growth limit. Its private archive/banks match the
+accepted profile. The correction retains both control banks and the existing
+engine/audio/task allocations; it limits fatal diagnostic text to 191
+characters. Native contracts and offline target gates do not establish boot.
 
 The current scope is **E1M1** with its complete original geometry. Gameplay uses
 all **160×93** rendered samples, scaled to **240×224**, with a **16-row HUD**.
@@ -30,16 +39,17 @@ pistol retains original detail, and the fist uses 2×2 asset blocks. These asset
 settings differ from screen resolution. The former 8×8 presentation mode and
 D♯4 view toggle have been removed from the source.
 
-Music boots in original DOS OPL mode, confirmed for the installed app by
-read-only telemetry. The eight-voice synth retains its VCO, VCF, VCA and room
+Music defaults to original DOS OPL mode, confirmed for the earlier live editor
+by read-only telemetry. The eight-voice synth retains its VCO, VCF, VCA and room
 reverb controls. The new NES FX bank filters the complete music, including OPL
 drums; PCM gunshots and physical master volume retain their separate paths.
 Defaults are original OPL, Synth bank and NES FX bypassed. See [audio](AUDIO.md).
 
-The reported missing cold-boot USB was resolved by replacing the programmer
+An earlier missing cold-boot USB incident was resolved by replacing the programmer
 cable with a normal USB data cable. Windows then exposed healthy COM5 and a
 UAC capture endpoint; read-only observation showed advancing gameplay with
-zero LCD/key errors. A firmware cold-boot defect was not established.
+zero LCD/key errors. That historical cable result does not explain the current
+remote candidate's startup failure.
 
 The hardware target remains 30 completed gameplay frames/s. Earlier observed
 builds did not meet that target; the new revision has no completed distinct-frame

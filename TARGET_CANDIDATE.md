@@ -9,20 +9,47 @@ between retained Synth and NES FX banks. Synth editing keeps its previous
 VCO/VCF/VCA/reverb assignments; NES FX assigns cutoff, resonance and LFO
 rate/depth, with exact NES presets and Bypass/LP/BP/HP modes. Bank selection
 preserves the OPL/synth source; E4 remains its toggle. Original OPL, Synth bank
-and bypassed NES FX are the defaults. This new source has **not been flashed**.
-All 13 native contracts, including the exact original OPL reference, and shared
-NES FX tests pass. The corrected target build/profile and budget gates pass;
-independent code audit passed; physical acceptance remains pending. The current
-artifact below is an offline candidate, separate from the installed Oct7 image.
+and bypassed NES FX are the defaults. The remote candidate completed verified
+readback but failed startup. Its former raw heap gate missed the SDK allocator's
+page-growth capacity. See the [allocator audit](ALLOCATOR_CAPACITY_AUDIT.md)
+for the bounded correction and updated gate; physical acceptance remains
+pending. Earlier host contracts and static audits did not establish boot.
 
 The fixed 296 KiB allocation is partitioned into a 294 KiB Doom zone and a
-2 KiB synth delay; the 4 KiB archive cache is unchanged. Source `626d2612` is installed and
-boots with advancing game/audio telemetry. Its 139-sector update and complete
+2 KiB synth delay; the 4 KiB archive cache is unchanged. Source `626d2612` ran
+with advancing game/audio telemetry. Its 139-sector update and complete
 1 MiB readback match image SHA-256 `a4c3fc49...`. Physical editing, speaker output
 and timing acceptance remain pending. Dated values below describe their named
 checkpoints; see [deployment evidence](DEPLOYMENT.md#live-editor-deployment-2026-10-07).
 
-### Offline NES FX artifact (2026-10-08; unflashed)
+### Corrected allocator artifact (2026-10-08; unflashed)
+
+| Gate | Result |
+| --- | --- |
+| Plain UBOOT input | `build/target-candidate-allocator-20261008/app.bin`, 567,376 B |
+| App SHA-256 | `ca1da356db77b36496fde06e6da4e7ccb32b38525241a1a88ef4626bbc7eca39` |
+| ELF SHA-256 | `408f27047b593cd740085f7ea57d73130bda8e7db366fa354c989a4b65102071` |
+| App slot / remaining | 584,956 B / 17,580 B |
+| Static RAM: data + BSS | 26,928 + 452,216 = 479,144 B |
+| Linker heap / reviewed raw startup reserve | 44,396 B / 4,384 B |
+| Page-grown footprint / reported-used upper bound | 41,024 B / 40,936 B, restoring the earlier capacity |
+| USB stack / diagnostic chain / SDK margin | 2,560 / 1,480 / 1,024 B; 56 B remaining |
+| Native contracts | 13/13 pass, including exact original OPL reference |
+| Focused Python checks | 27 pass: candidate 15, emitted stack 10, engine 1, diagnostic guard-page 1 |
+| Prepared encoded-image SHA-256 | `46d857fc07f02345f95bcaaa988c2ac95492ffbd64c6d3d72e14cd34aa546a3f` |
+| Offline update/restore validation | 139 sectors, directory last; boot/config/tail preserved |
+
+The known-profile archive and all three private banks are retained. The
+diagnostic buffer is 192 B; its 256 B status field retains a bounded copy and
+zero-filled tail. The new immutable private catalog ID is
+`doom-original-allocator-20261008`. It was exported from an idle verified
+historical baseline without device I/O. The page-aware gate is a necessary
+capacity bound; runtime allocation order, boot and physical acceptance remain
+open. The laptop separately restored and serial-booted the working NES image;
+the previous failed Doom state is retained. This offline package does not
+authorize another hardware write.
+
+### Failed NES FX artifact (remote readback, 2026-10-08)
 
 | Gate | Result |
 | --- | --- |
@@ -35,7 +62,7 @@ checkpoints; see [deployment evidence](DEPLOYMENT.md#live-editor-deployment-2026
 | Linker heap / reviewed startup reserve | 44,332 B / 4,320 B; required 4,096 B |
 | USB stack / diagnostic chain / SDK margin | 2,560 / 1,480 / 1,024 B; 56 B remaining |
 | Source closure / compilation | 442 hashes; 79 engine and 7 port units |
-| Target gates | Archive/banks, XIP, DMA, descriptors, source, stack and RAM pass |
+| Former target gates | Archive/banks, XIP, DMA, descriptors, source, stack and raw RAM passed; page-aware capacity rejects this image |
 | Native contracts | 13/13 pass, including exact original OPL reference |
 | Candidate/stack Python checks | 18/18 pass |
 | Prepared shared filter | 226,084 samples match exact 64-bit reference; all 128 LFO rates, stale rejection and buffer/partition paths pass |
@@ -44,9 +71,10 @@ checkpoints; see [deployment evidence](DEPLOYMENT.md#live-editor-deployment-2026
 | Offline update/restore validation | 139 sectors, directory last; boot/config/tail preserved |
 
 The 170,636 B archive and all sound/music/OPL banks match the retained accepted
-manifest. No device operation or new flash accompanies these build results.
-Independent audit passed. Hardware editing response, speaker/streaming quality,
-sustained DSP timing and 30 completed distinct frames/s remain open.
+manifest. The laptop reported all 139 sectors verified and an exact complete
+1 MiB readback. Serial observation failed opening COM14; the user reported a
+blank/frozen screen after one manual cold start. These results do not establish
+boot or physical acceptance. Correction builds use a separate output directory.
 
 ### Last installed live-editor artifact (2026-10-07)
 

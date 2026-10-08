@@ -1,8 +1,17 @@
-# FM-1 Doom deployment, 2026-10-05–07
+# FM-1 Doom deployment, 2026-10-05–08
 
 ## Current result
 
-The live editor from source `626d2612` is installed: 565,744 B, app SHA-256
+The laptop's newer NES FX image completed sector/full-image verification but
+failed startup. The laptop subsequently reported a user-authorized UBOOT
+restore to the working NES image, with verified sectors/full readback and
+successful serial boot. The failed Doom session is retained; physical NES
+screen confirmation remains pending. No offline correction clears its state. See the
+[allocator-capacity audit](ALLOCATOR_CAPACITY_AUDIT.md) for current evidence and
+the freshly built private replacement candidate. It is unflashed and has no
+hardware boot acceptance.
+
+The earlier live editor from source `626d2612` ran: 565,744 B, app SHA-256
 `70553874...`. The build removes the 8×8 presentation mode and adds synth
 presets/algorithm and VCO/VCF/VCA/reverb editing. Its recovered 139-sector update
 and complete 1 MiB readback match `a4c3fc49...`; one reset reached stage4/fault0

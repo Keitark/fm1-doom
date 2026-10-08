@@ -19,6 +19,98 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_LIMIT = 602_112  # stock V15 application allocation, not whole flash
 UBOOT_APP_SLOT_LIMIT = 584_956  # reviewed V14/v32 application slot
 RAM0_LIMIT = 523_596  # pinned linker RAM0 window
+ALLOCATOR_OBJECT_SHA256 = "7a38713f3f2680ca3833bd667ef33b4ea60be8cd6e8a226c59d42d0ba8f060be"
+ALLOCATOR_PAGE_BYTES = 4096
+ALLOCATOR_ACCOUNTING_BYTES = 88
+# Exact 626d261 / 70553874... image: raw heap 44396, observed heap_free 3508.
+# Preserve its page-grown capacity bound, including the 48 B bound margin.
+ALLOCATOR_REFERENCE_USED_BYTES = 44_396 - 3508
+ALLOCATOR_REQUIRED_USED_BOUND_BYTES = 40_936
+
+
+def verify_allocator_object(data: bytes) -> str:
+    """Pin the audited SDK bitcode; a different allocator needs a new review."""
+    digest = hashlib.sha256(data).hexdigest()
+    if not data.startswith(b"BC\xc0\xde") or digest != ALLOCATOR_OBJECT_SHA256:
+        raise ValueError("SDK allocator differs from the reviewed malloc.c.o pin")
+    return digest
+
+
+def allocator_heap_budget(heap_begin: int, heap_end: int) -> dict:
+    """Bound arena growth for the pinned dlmalloc, not aggregate unused RAM.
+
+    The first positive sbrk grows a page-rounded amount plus the gap to the
+    next page. Later growth and trimming are page multiples. sbrk rejects an
+    endpoint equal to HEAP_END. The allocator's reported used count subtracts
+    88 bytes, the wilderness and free chunks from its arena footprint.
+    """
+    if not 0 <= heap_begin < heap_end <= 0xffffffff:
+        raise ValueError("allocator heap addresses are invalid")
+    page = ALLOCATOR_PAGE_BYTES
+    gap = (-heap_begin) % page
+    last_page = ((heap_end - 1) // page) * page
+    footprint = last_page - heap_begin if last_page >= heap_begin + gap + page else 0
+    upper_bound = max(0, footprint - ALLOCATOR_ACCOUNTING_BYTES)
+    if upper_bound < ALLOCATOR_REQUIRED_USED_BOUND_BYTES:
+        raise ValueError(
+            f"allocator page-grown used bound {upper_bound} is below the reviewed "
+            f"{ALLOCATOR_REQUIRED_USED_BOUND_BYTES}; raw heap size does not establish allocation capacity")
+    return {
+        "heap_begin": hex(heap_begin), "heap_end": hex(heap_end),
+        "raw_linker_heap_bytes": heap_end - heap_begin,
+        "allocator_object_sha256": ALLOCATOR_OBJECT_SHA256,
+        "page_bytes": page, "initial_alignment_gap_bytes": gap,
+        "sbrk_end_comparison": "positive growth requires endpoint < HEAP_END",
+        "maximum_arena_end": hex(heap_begin + footprint),
+        "maximum_reachable_arena_bytes": footprint,
+        "unreachable_tail_bytes": heap_end - heap_begin - footprint,
+        "reported_used_accounting_bytes": ALLOCATOR_ACCOUNTING_BYTES,
+        "reported_used_upper_bound_bytes": upper_bound,
+        "required_reported_used_upper_bound_bytes": ALLOCATOR_REQUIRED_USED_BOUND_BYTES,
+        "bound_margin_over_observed_reference_bytes": upper_bound - ALLOCATOR_REFERENCE_USED_BYTES,
+        "reference": {
+            "source_commit": "626d261208c6a1b9ae12783da524ea50c173b24d",
+            "application_sha256": "70553874c1d8dd2e89e1448d27fbf89b1d5476b8573f3a9cb1e89fa46cfd3d35",
+            "verified_image_sha256": "a4c3fc499f9a3bcf017d33bc48a7d2555e6eac04d52dde5863f3313b958c48a1",
+            "raw_linker_heap_bytes": 44_396, "observed_heap_free_bytes": 3508,
+            "observed_reported_used_bytes": ALLOCATOR_REFERENCE_USED_BYTES,
+            "previous_reported_used_upper_bound_bytes": ALLOCATOR_REQUIRED_USED_BOUND_BYTES,
+            "evidence": "DEPLOYMENT.md live-editor deployment 2026-10-07; bench-live-editor-20261007.json",
+        },
+        "limitation": "Capacity upper bound, not largest-block or minimum-ever free space. Preserves the known successful allocation state's bound margin; does not establish allocation order, future runtime headroom or hardware boot acceptance.",
+    }
+
+
+def verify_allocator_link(nm: str, disassembly: str, link_map: str,
+                          system_library: Path) -> dict:
+    """Fail closed when final linkage invalidates the pinned growth model."""
+    symbols = set(re.findall(r"^[0-9a-fA-F]+\s+[A-Za-z]\s+(\S+)$", nm, re.M))
+    required = {"malloc", "free", "sbrk", "get_malloc_remain_heap_size"}
+    if not required.issubset(symbols):
+        raise ValueError("reviewed allocator symbols are missing from the final ELF")
+    if symbols & {"mallopt", "dlmallopt", "_mallopt_r", "ram_malloc", "ram_zalloc", "ram_realloc"}:
+        raise ValueError("final ELF contains unreviewed allocator configuration or arena paths")
+    member = str(system_library) + "(malloc.c.o)"
+    if member not in link_map:
+        raise ValueError("reviewed system.a allocator member is absent from the link map")
+    current = None
+    callers = {"malloc": 0, "free": 0}
+    for line in disassembly.splitlines():
+        label = re.fullmatch(r"([A-Za-z_.$][A-Za-z0-9_.$]*):", line.strip())
+        if label:
+            current = label.group(1)
+        if re.search(r"<sbrk\s*:", line):
+            if current not in callers or not re.search(r"\bcall\b", line):
+                raise ValueError("sbrk has an unreviewed caller or address-taking reference")
+            callers[current] += 1
+    # The exact pinned member has seven growth/query calls in malloc and three
+    # query/negative-trim calls in free. Missing annotations are not a pass.
+    if callers != {"malloc": 7, "free": 3}:
+        raise ValueError(f"final allocator sbrk call closure changed: {callers}")
+    return {"sdk_library": str(system_library), "archive_member": "malloc.c.o",
+            "sbrk_direct_call_counts": callers, "unreviewed_sbrk_references": False,
+            "allocator_configuration_symbols_present": False,
+            "scope": "Pinned input member, final member linkage and direct sbrk reference closure; runtime allocation order remains unobserved."}
 
 
 def task_heap_budget(source: str, usb_dynamic_heap_bytes: int = 0,
@@ -197,6 +289,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path, help="local 4 KiB-block FMD1 menu archive")
     parser.add_argument("--fm1-root", type=Path, required=True)
+    parser.add_argument("--out-dir", type=Path, default=ROOT / "build/target-candidate",
+                        help="candidate output directory; use a fresh directory to preserve previous artifacts")
     parser.add_argument("--sound-bank", type=Path,
                         default=ROOT / "build/sound-bank/fm1_doom_sound_bank.c",
                         help="private generated XIP shareware SFX bank source")
@@ -207,7 +301,7 @@ def main() -> int:
                         default=ROOT / "build/opl-bank/genmidi_bank.c",
                         help="private original GENMIDI patch closure for E1M1")
     args = parser.parse_args()
-    out = ROOT / "build/target-candidate"
+    out = args.out_dir.resolve()
     out.mkdir(parents=True, exist_ok=True)
     manifest = out / "build-manifest.json"
     manifest.write_text(json.dumps({"status": "build_in_progress_or_failed",
@@ -436,6 +530,15 @@ def main() -> int:
          str(iis_object), "-o", str(iis_ir)])
     audio_allocations = iis_heap_allocations(iis_ir.read_text(encoding="utf-8"))
     source_closure.update((cpu_library, iis_object, iis_ir))
+    system_library = sdk / "cpu/wl82/liba/system.a"
+    allocator_object = out / "allocator-audit.o"
+    extracted = subprocess.run([str(board.TC / "llvm-ar.exe"), "p", str(system_library), "malloc.c.o"],
+                               capture_output=True)
+    if extracted.returncode:
+        raise ValueError("cannot extract the reviewed SDK allocator")
+    verify_allocator_object(extracted.stdout)
+    allocator_object.write_bytes(extracted.stdout)
+    source_closure.update((system_library, allocator_object))
     task_budget = task_heap_budget((ROOT / "src/fm1_doom_target.c").read_text(encoding="utf-8"),
                                    usb_allocations["total_requested_bytes"],
                                    audio_allocations["total_requested_bytes"])
@@ -472,6 +575,9 @@ def main() -> int:
         if sections.get(name, (0, 0))[0]:
             raise ValueError(f"unsupported external RAM section is nonempty: {name}")
     nm = run([str(board.TC / "llvm-nm.exe"), "-n", str(elf)])
+    allocator_link = verify_allocator_link(
+        nm, run([str(board.TC / "llvm-objdump.exe"), "-d", "-no-show-raw-insn", str(elf)]),
+        (out / "fm1-doom-candidate.map").read_text(encoding="utf-8"), system_library)
     filesystem = verify_sdfilesystem(nm)
     usb_stack_report = inspect_stack(elf, board.TC)
     usb_stack_bytes = next(task["stack_bytes"] for task in task_budget["tasks"]
@@ -530,6 +636,8 @@ def main() -> int:
         raise ValueError("candidate exceeds flash or static RAM")
     if heap_bytes < task_budget["required_linker_heap_bytes"]:
         raise ValueError(f"candidate linker heap {heap_bytes} is below the reviewed startup requirement {task_budget['required_linker_heap_bytes']}")
+    allocator_budget = allocator_heap_budget(heap["_HEAP_BEGIN"], heap["_HEAP_END"])
+    allocator_budget["linked_allocator"] = allocator_link
     task_budget["runtime_reserve_after_reviewed_startup_bytes"] = heap_bytes - task_budget["minimum_task_heap_bytes"] - task_budget["reviewed_init_allowance_bytes"] - task_budget["usb_dynamic_heap_bytes"] - task_budget["audio_dynamic_heap_bytes"]
     uboot_app = out / "app.bin"
     uboot_app.write_bytes(application.read_bytes())
@@ -554,6 +662,7 @@ def main() -> int:
         "ram0_bss_bytes": sections.get(".ram0_bss", (0, 0))[0],
         "linked_heap_bytes_before_runtime": heap_bytes,
         "startup_heap_budget": task_budget,
+        "allocator_heap_budget": allocator_budget,
         "filesystem": filesystem,
         "usb_diagnostic_stack": usb_stack_budget,
         "audio": {"output": "IIS_PORTC ALINK0 channel 3 signed 24-bit stereo at 44100 Hz",
