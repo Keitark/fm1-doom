@@ -1,5 +1,10 @@
 # FM-1 Doom
 
+[![License: GPL-2.0](https://img.shields.io/github/license/Keitark/fm1-doom?label=License)](https://github.com/Keitark/fm1-doom/blob/main/LICENSE)
+![Target: M-VAVE FM-1 (WL82)](https://img.shields.io/badge/Target-M--VAVE%20FM--1%20%28WL82%29-147d64)
+![Scope: E1M1 shareware](https://img.shields.io/badge/Scope-E1M1%20shareware-6954a0)
+![Game data: not bundled](https://img.shields.io/badge/Game%20data-not%20bundled-4c566a)
+
 The **original Doom engine** on the M-VAVE FM-1, based on
 [Doomgeneric](https://github.com/ozkl/doomgeneric) pinned at
 `dcb7a8dbc7a16ce3dda29382ac9aae9d77d21284` under GPL-2.0.
