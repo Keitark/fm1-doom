@@ -9,6 +9,16 @@ The **original Doom engine** on the M-VAVE FM-1, based on
 [Doomgeneric](https://github.com/ozkl/doomgeneric) pinned at
 `dcb7a8dbc7a16ce3dda29382ac9aae9d77d21284` under GPL-2.0.
 
+## Screenshots
+
+| Title menu | E1M1 gameplay |
+| --- | --- |
+| ![Doom title menu rendered by the desktop host](docs/screenshots/title-menu.png) | ![E1M1 gameplay rendered by the desktop host](docs/screenshots/e1m1-gameplay.png) |
+
+These are 240×240 desktop-host renders from the pinned Doom shareware data,
+not hardware captures. The IWAD and converted game assets are not included;
+the screenshot artwork is from Doom by id Software.
+
 ## Latest build receipt (2026-10-09)
 
 The full local shareware pipeline at Doom repo commit
