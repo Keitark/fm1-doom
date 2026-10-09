@@ -1,0 +1,142 @@
+cmake_minimum_required(VERSION 3.20)
+project(fm1_doom C)
+set(CMAKE_C_STANDARD 99)
+set(FM1_DOOM_BOARD_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../fm1/firmware/nes"
+    CACHE PATH "FM-1 NES support source directory")
+if(FM1_DOOM_ENGINE_DIR)
+  file(TO_CMAKE_PATH "${FM1_DOOM_ENGINE_DIR}" DOOM_SRC)
+else()
+  set(DOOM_SRC "${CMAKE_CURRENT_SOURCE_DIR}/vendor/doomgeneric/doomgeneric")
+endif()
+if(NOT EXISTS "${DOOM_SRC}/d_main.c")
+  message(FATAL_ERROR "Run git submodule update --init")
+endif()
+add_library(fm1_doom_port STATIC src/fm1_doom_port.c)
+target_include_directories(fm1_doom_port PUBLIC include "${DOOM_SRC}")
+if((FM1_DOOM_EXPERIMENTAL_WIDTH AND NOT FM1_DOOM_EXPERIMENTAL_HEIGHT) OR
+   (FM1_DOOM_EXPERIMENTAL_HEIGHT AND NOT FM1_DOOM_EXPERIMENTAL_WIDTH))
+  message(FATAL_ERROR "Set both experimental source dimensions")
+endif()
+if(FM1_DOOM_EXPERIMENTAL_WIDTH AND FM1_DOOM_EXPERIMENTAL_HEIGHT)
+  target_compile_definitions(fm1_doom_port PUBLIC
+    FM1_DOOM_SOURCE_WIDTH=${FM1_DOOM_EXPERIMENTAL_WIDTH}
+    FM1_DOOM_SOURCE_HEIGHT=${FM1_DOOM_EXPERIMENTAL_HEIGHT})
+endif()
+enable_testing()
+add_executable(port_tests tests/port_tests.c)
+target_link_libraries(port_tests PRIVATE fm1_doom_port)
+add_test(NAME port_contract COMMAND port_tests)
+add_executable(edit_tests tests/edit_tests.c src/fm1_doom_edit.c
+  "${FM1_DOOM_BOARD_ROOT}/src/fm1_nes_fx.c")
+target_include_directories(edit_tests PRIVATE include "${FM1_DOOM_BOARD_ROOT}/include")
+add_test(NAME live_sound_edit_contract COMMAND edit_tests)
+add_library(fm1_doom_archive STATIC src/fm1_doom_archive.c)
+target_include_directories(fm1_doom_archive PUBLIC include)
+add_executable(archive_tests tests/archive_tests.c)
+target_link_libraries(archive_tests PRIVATE fm1_doom_archive)
+add_test(NAME archive_contract COMMAND archive_tests)
+add_executable(target_io_tests tests/target_io_tests.c src/fm1_doom_target_io.c)
+target_include_directories(target_io_tests PRIVATE include)
+add_test(NAME target_lcd_contract COMMAND target_io_tests)
+add_executable(usb_protocol_tests tests/usb_protocol_tests.c src/fm1_doom_usb_protocol.c)
+target_include_directories(usb_protocol_tests PRIVATE include)
+add_test(NAME target_usb_contract COMMAND usb_protocol_tests)
+add_executable(printf_tests tests/printf_tests.c src/fm1_doom_printf.c)
+target_compile_definitions(printf_tests PRIVATE FM1_DOOM_PRINTF_HOST_TEST=1 _CRT_SECURE_NO_WARNINGS)
+add_test(NAME target_integer_formatter_contract COMMAND printf_tests)
+add_executable(usb_audio_capture_tests tests/usb_audio_capture_tests.c
+  src/fm1_usb_audio_capture.c src/fm1_usb_audio_profile.c)
+target_include_directories(usb_audio_capture_tests PRIVATE include)
+target_compile_definitions(usb_audio_capture_tests PRIVATE FM1_USB_AUDIO_CAPTURE_TEST=1)
+if(MSVC)
+  target_compile_options(usb_audio_capture_tests PRIVATE /UNDEBUG)
+else()
+  target_compile_options(usb_audio_capture_tests PRIVATE -UNDEBUG)
+endif()
+add_test(NAME target_usb_audio_capture_contract COMMAND usb_audio_capture_tests)
+add_executable(usb_packet_tests tests/usb_packet_tests.c src/fm1_usb_packet.c)
+target_include_directories(usb_packet_tests PRIVATE include tests)
+target_compile_definitions(usb_packet_tests PRIVATE FM1_USB_PACKET_HOST=1)
+add_test(NAME target_usb_packet_contract COMMAND usb_packet_tests)
+add_executable(usb_audio_target_tests tests/usb_audio_target_tests.c
+  src/fm1_usb_audio_target.c src/fm1_usb_audio_capture.c src/fm1_usb_audio_profile.c)
+target_include_directories(usb_audio_target_tests PRIVATE include tests)
+target_compile_definitions(usb_audio_target_tests PRIVATE
+  FM1_USB_AUDIO_TARGET_HOST=1 FM1_USB_AUDIO_CAPTURE_TEST=1 _CRT_SECURE_NO_WARNINGS)
+add_test(NAME target_usb_audio_adapter_contract COMMAND usb_audio_target_tests)
+
+set(FM1_DOOM_SOUND_BANK_SOURCE "" CACHE FILEPATH "Private generated FM-1 SFX bank for host sound tests")
+if(FM1_DOOM_SOUND_BANK_SOURCE)
+  if(NOT EXISTS "${FM1_DOOM_SOUND_BANK_SOURCE}" OR
+     NOT EXISTS "${FM1_DOOM_BOARD_ROOT}/src/fm1_audio_queue.c")
+    message(FATAL_ERROR "Sound tests require the private sound bank and FM-1 board support")
+  endif()
+  add_executable(sound_tests tests/sound_tests.c src/fm1_doom_sound.c
+    "${FM1_DOOM_SOUND_BANK_SOURCE}" "${FM1_DOOM_BOARD_ROOT}/src/fm1_audio_queue.c")
+  get_filename_component(FM1_DOOM_SOUND_BANK_DIRECTORY "${FM1_DOOM_SOUND_BANK_SOURCE}" DIRECTORY)
+  target_include_directories(sound_tests PRIVATE include tests "${DOOM_SRC}"
+    "${FM1_DOOM_BOARD_ROOT}/include" "${FM1_DOOM_SOUND_BANK_DIRECTORY}")
+  target_compile_definitions(sound_tests PRIVATE FM1_DOOM_SOUND_TEST=1 _CRT_SECURE_NO_WARNINGS)
+  add_test(NAME target_sound_contract COMMAND sound_tests)
+  add_executable(sound_volume_integration_tests tests/sound_volume_integration_tests.c
+    src/fm1_doom_sound.c "${FM1_DOOM_SOUND_BANK_SOURCE}"
+    "${FM1_DOOM_BOARD_ROOT}/src/fm1_audio_queue.c"
+    "${FM1_DOOM_BOARD_ROOT}/src/fm1_volume.c")
+  target_include_directories(sound_volume_integration_tests PRIVATE include tests "${DOOM_SRC}"
+    "${FM1_DOOM_BOARD_ROOT}/include" "${FM1_DOOM_SOUND_BANK_DIRECTORY}")
+  target_compile_definitions(sound_volume_integration_tests PRIVATE
+    FM1_DOOM_SOUND_TEST=1 FM1_VOLUME_TEST=1 _CRT_SECURE_NO_WARNINGS)
+  add_test(NAME target_sound_volume_integration_contract COMMAND sound_volume_integration_tests)
+endif()
+
+set(FM1_DOOM_MUSIC_BANK_SOURCE "" CACHE FILEPATH "Private generated FM-1 music score for host tests")
+set(FM1_DOOM_GENMIDI_BANK_SOURCE "" CACHE FILEPATH "Private original GENMIDI patch bank for host tests")
+set(FM1_DOOM_OPL_REFERENCE_SOURCE "" CACHE FILEPATH "Private independently generated original OPL reference fixture")
+if(FM1_DOOM_MUSIC_BANK_SOURCE)
+  if(NOT EXISTS "${FM1_DOOM_MUSIC_BANK_SOURCE}" OR NOT EXISTS "${FM1_DOOM_GENMIDI_BANK_SOURCE}")
+    message(FATAL_ERROR "Music tests require the private generated score and original GENMIDI bank")
+  endif()
+  add_executable(music_score_tests tests/music_score_tests.c src/fm1_doom_music.c
+    src/fm1_doom_opl.c vendor/emu8950/emu8950.c
+    "${FM1_DOOM_BOARD_ROOT}/src/fm1_nes_fx.c"
+    "${FM1_DOOM_MUSIC_BANK_SOURCE}" "${FM1_DOOM_GENMIDI_BANK_SOURCE}")
+  target_include_directories(music_score_tests PRIVATE include vendor/emu8950 "${DOOM_SRC}"
+    "${FM1_DOOM_BOARD_ROOT}/include")
+  target_compile_definitions(music_score_tests PRIVATE FM1_TARGET_PI32V2=1 _CRT_SECURE_NO_WARNINGS)
+  add_test(NAME target_music_score_contract COMMAND music_score_tests)
+  if(FM1_DOOM_OPL_REFERENCE_SOURCE)
+    add_executable(opl_reference_tests tests/opl_reference_tests.c src/fm1_doom_music.c
+      src/fm1_doom_opl.c vendor/emu8950/emu8950.c
+      "${FM1_DOOM_BOARD_ROOT}/src/fm1_nes_fx.c"
+      "${FM1_DOOM_MUSIC_BANK_SOURCE}" "${FM1_DOOM_GENMIDI_BANK_SOURCE}" "${FM1_DOOM_OPL_REFERENCE_SOURCE}")
+    target_include_directories(opl_reference_tests PRIVATE include vendor/emu8950 "${DOOM_SRC}"
+      "${FM1_DOOM_BOARD_ROOT}/include")
+    target_compile_definitions(opl_reference_tests PRIVATE FM1_TARGET_PI32V2=1 FM1_DOOM_OPL_TEST=1 _CRT_SECURE_NO_WARNINGS)
+    add_test(NAME original_opl_reference_contract COMMAND opl_reference_tests)
+  endif()
+endif()
+
+# Optional validation of the target allocation binding using the SDK headers
+# and a real Windows zlib DLL. The SDK library itself runs only on PI32V2.
+if(WIN32 AND FM1_ZLIBLITE_INCLUDE_DIR)
+  add_executable(zliblite_tests tests/zliblite_tests.c
+    src/fm1_fmd_zliblite.c src/fm1_doom_archive.c)
+  target_include_directories(zliblite_tests PRIVATE include "${FM1_ZLIBLITE_INCLUDE_DIR}")
+  target_compile_definitions(zliblite_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
+  add_test(NAME target_inflater_contract COMMAND zliblite_tests)
+endif()
+
+if(WIN32)
+  file(STRINGS "${DOOM_SRC}/doomgeneric.vcxproj" ENGINE_LINES REGEX "ClCompile Include=\".*\\.c\"")
+  foreach(LINE IN LISTS ENGINE_LINES)
+    string(REGEX REPLACE ".*ClCompile Include=\"([^\"]+)\".*" "\\1" NAME "${LINE}")
+    if(NOT NAME MATCHES "^(doomgeneric|doomgeneric_win|i_video|w_file)\\.c$")
+      list(APPEND ENGINE_SOURCES "${DOOM_SRC}/${NAME}")
+    endif()
+  endforeach()
+  set_source_files_properties("${DOOM_SRC}/i_system.c" PROPERTIES COMPILE_DEFINITIONS "I_ZoneBase=I_ZoneBase_Original")
+  add_executable(fm1_doom_host ${ENGINE_SOURCES} src/doomgeneric_fm1.c src/i_video_fm1.c src/w_file_fm1.c host/main.c host/zone.c)
+  target_include_directories(fm1_doom_host PRIVATE include "${DOOM_SRC}")
+  target_compile_definitions(fm1_doom_host PRIVATE _CRT_SECURE_NO_WARNINGS)
+  target_link_libraries(fm1_doom_host PRIVATE fm1_doom_port fm1_doom_archive)
+endif()

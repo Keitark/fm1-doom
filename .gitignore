@@ -1,6 +1,10 @@
 /build/
+.default.cfg
+.savegame/
 *.wad
 *.WAD
 *.bin
 *.elf
 *.map
+*.fmd
+__pycache__/

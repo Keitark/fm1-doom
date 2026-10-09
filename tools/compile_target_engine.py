@@ -1,0 +1,58 @@
+"""Diagnostic compile of pinned Doomgeneric core for pi32v2; no link or flash."""
+import argparse
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+SKIP = {"doomgeneric.c", "doomgeneric_win.c", "i_video.c", "w_file.c"}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--fm1-root", type=Path, required=True)
+    parser.add_argument("--lowres", action="store_true",
+                        help="Compile generated 160x100 engine source")
+    args = parser.parse_args()
+    doom = ROOT / ("build/lowres-source" if args.lowres else "vendor/doomgeneric/doomgeneric")
+    if not (doom / "doomgeneric.vcxproj").is_file():
+        parser.error("generate the low-resolution source first")
+    fm1 = args.fm1_root.resolve()
+    sys.path.insert(0, str(fm1 / "firmware/nes"))
+    import build_boot as board
+    sdk = board.SDK.resolve()
+    if sdk != (fm1 / "references/source/fw-AC79_AIoT_SDK").resolve():
+        parser.error("SDK path differs from selected FM-1 root")
+    pin = subprocess.check_output(["git", "-C", str(sdk), "rev-parse", "HEAD"], text=True).strip()
+    if pin != board.SDK_PIN:
+        parser.error("SDK revision differs from the reviewed pin")
+    if subprocess.check_output(["git", "-C", str(sdk), "status", "--porcelain"], text=True).strip():
+        parser.error("SDK checkout is dirty")
+    make = board.MAKE.read_text(encoding="utf-8")
+    flags = board.make_list(make, "CFLAGS")
+    flags += ["-DFM1_TARGET_PI32V2=1"]
+    includes = ["-I" + str(ROOT / "include"), "-I" + str(doom), "-I" + str(sdk / "apps/common")]
+    includes.extend("-I" + str(board.sdk_path(i[2:])) for i in board.make_list(make, "INCLUDES"))
+    names = re.findall(r'<ClCompile Include="([^\"]+\.c)"', (doom / "doomgeneric.vcxproj").read_text())
+    out = ROOT / ("build/target-engine-lowres" if args.lowres else "build/target-engine")
+    out.mkdir(parents=True, exist_ok=True)
+    failures = []
+    for name in names:
+        if name in SKIP:
+            continue
+        source_flags = ["-DI_ZoneBase=I_ZoneBase_Original"] if args.lowres and name == "i_system.c" else []
+        result = subprocess.run([str(board.TC / "clang.exe"), *flags, *source_flags, *includes,
+                                 "-c", str(doom / name), "-o", str(out / (name + ".o"))],
+                                capture_output=True, text=True)
+        if result.returncode:
+            failures.append(name)
+            print(f"FAIL {name}:\n{result.stderr[:1500]}", flush=True)
+        else:
+            print(f"PASS {name}", flush=True)
+    print(f"Compiled {len(names) - len(SKIP) - len(failures)} core files; failed {len(failures)}")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

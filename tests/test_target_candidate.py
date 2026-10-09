@@ -1,0 +1,156 @@
+import sys
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+from build_target_candidate import (allocator_heap_budget, iis_heap_allocations, task_heap_budget,
+                                    verify_allocator_link, verify_allocator_object,
+                                    usb_heap_allocations, verify_sdfilesystem)
+
+
+class TargetBudgetTests(unittest.TestCase):
+    def test_fx_heap_passes_raw_gate_but_loses_previous_allocator_capacity(self):
+        source = (ROOT / "src/fm1_doom_target.c").read_text(encoding="utf-8")
+        raw_heap = 0x01c7fd2c - 0x01c75000
+        self.assertGreater(raw_heap, task_heap_budget(source, 1236, 1024)["required_linker_heap_bytes"])
+        with self.assertRaisesRegex(ValueError, "40872.*40936"):
+            allocator_heap_budget(0x01c75000, 0x01c7fd2c)
+
+    def test_previous_verified_heap_and_reclaimed_capacity_retain_reference_state(self):
+        for begin, capacity in ((0x01c74fc0, 40_936), (0x01c74fa0, 40_968)):
+            with self.subTest(begin=hex(begin)):
+                budget = allocator_heap_budget(begin, 0x01c7fd2c)
+                self.assertEqual(budget["reported_used_upper_bound_bytes"], capacity)
+                self.assertGreaterEqual(budget["bound_margin_over_observed_reference_bytes"], 48)
+        old = allocator_heap_budget(0x01c74fc0, 0x01c7fd2c)
+        self.assertEqual(old["initial_alignment_gap_bytes"], 64)
+        self.assertEqual(old["maximum_reachable_arena_bytes"], 41_024)
+        self.assertEqual(old["unreachable_tail_bytes"], 3372)
+
+    def test_sbrk_strict_end_boundary_discards_equal_endpoint_page(self):
+        with self.assertRaisesRegex(ValueError, "36840"):
+            allocator_heap_budget(0x01c74fc0, 0x01c7f000)
+        # One byte after the page endpoint allows the final whole page.
+        budget = allocator_heap_budget(0x01c74fc0, 0x01c7f001)
+        self.assertEqual(budget["reported_used_upper_bound_bytes"], 40_936)
+        self.assertEqual(budget["unreachable_tail_bytes"], 1)
+
+    def test_invalid_heap_bounds_are_rejected(self):
+        for begin, end in ((10, 10), (11, 10), (-1, 100), (1, 0x100000000)):
+            with self.subTest(begin=begin, end=end), self.assertRaises(ValueError):
+                allocator_heap_budget(begin, end)
+
+    def test_changed_allocator_bitcode_cannot_use_reviewed_model(self):
+        with self.assertRaisesRegex(ValueError, "malloc.c.o pin"):
+            verify_allocator_object(b"BC\xc0\xdeunreviewed allocator")
+
+    @staticmethod
+    def allocator_link_fixture():
+        library = Path("reviewed-sdk/system.a")
+        symbols = "\n".join("02000000 t " + name for name in
+                            ("malloc", "free", "sbrk", "get_malloc_remain_heap_size"))
+        assembly = "malloc:\n" + "  2000010: call -16 <sbrk : 2000000 >\n" * 7
+        assembly += "free:\n" + "  2000020: call -32 <sbrk : 2000000 >\n" * 3
+        return library, symbols, assembly, str(library) + "(malloc.c.o)"
+
+    def test_reviewed_final_allocator_call_closure_is_accepted(self):
+        library, symbols, assembly, link_map = self.allocator_link_fixture()
+        result = verify_allocator_link(symbols, assembly, link_map, library)
+        self.assertEqual(result["sbrk_direct_call_counts"], {"malloc": 7, "free": 3})
+
+    def test_other_sbrk_paths_configuration_and_missing_evidence_fail_closed(self):
+        library, symbols, assembly, link_map = self.allocator_link_fixture()
+        cases = (
+            (symbols + "\n02000100 t mallopt", assembly, link_map),
+            (symbols + "\n02000100 t ram_malloc", assembly, link_map),
+            (symbols.replace("sbrk", "missing_sbrk"), assembly, link_map),
+            (symbols, assembly + "unreviewed:\n 2000030: call <sbrk : 2000000 >\n", link_map),
+            (symbols, assembly + " 2000030: r0 = 33554432 <sbrk : 2000000 >\n", link_map),
+            (symbols, assembly.replace("<sbrk :", "<unknown :", 1), link_map),
+            (symbols, assembly, "unrelated.a(malloc.c.o)"),
+        )
+        for nm, disassembly, map_text in cases:
+            with self.subTest(nm=nm, assembly=disassembly, map_text=map_text), self.assertRaises(ValueError):
+                verify_allocator_link(nm, disassembly, map_text, library)
+
+    def test_reviewed_task_budget(self):
+        source = (ROOT / "src/fm1_doom_target.c").read_text(encoding="utf-8")
+        budget = task_heap_budget(source, 1236)
+        self.assertEqual(budget["minimum_task_heap_bytes"], 36_952)
+        self.assertEqual(budget["required_linker_heap_bytes"], 43_084)
+
+    def test_old_stack_exceeds_previous_linker_heap(self):
+        source = (ROOT / "src/fm1_doom_target.c").read_text(encoding="utf-8")
+        source = source.replace('"#C0fm1_doom", 10, 2048', '"#C0fm1_doom", 10, 8192')
+        budget = task_heap_budget(source, 1236)
+        self.assertEqual(budget["required_linker_heap_bytes"], 67_660)
+        self.assertGreater(budget["required_linker_heap_bytes"], 48_332)
+
+    def test_audio_dma_is_reserved_before_runtime_margin(self):
+        source = (ROOT / "src/fm1_doom_target.c").read_text(encoding="utf-8")
+        budget = task_heap_budget(source, 1236, 1024)
+        self.assertEqual(budget["minimum_task_heap_bytes"], 36_952)
+        self.assertEqual(budget["audio_dynamic_heap_bytes"], 1024)
+        self.assertEqual(budget["required_runtime_reserve_bytes"], 4096)
+        self.assertEqual(budget["required_linker_heap_bytes"], 44_108)
+
+    def test_usb_reduction_returns_heap_without_changing_doom_stack(self):
+        source = (ROOT / "src/fm1_doom_target.c").read_text(encoding="utf-8")
+        previous = source.replace('"#C0doom_usb", 11, 640', '"#C0doom_usb", 11, 768')
+        current = task_heap_budget(source, 1236, 1024)
+        old = task_heap_budget(previous, 1236, 1024)
+        self.assertEqual(old["minimum_task_heap_bytes"] - current["minimum_task_heap_bytes"], 512)
+        doom = next(task for task in current["tasks"] if task["name"] == "fm1_doom")
+        self.assertEqual(doom["stack_bytes"], 8192)
+
+    def test_task_affinity_keeps_usb_and_game_off_audio_cpu(self):
+        source = (ROOT / "src/fm1_doom_target.c").read_text(encoding="utf-8")
+        tasks = {task["name"]: task for task in task_heap_budget(source)["tasks"]}
+        self.assertEqual(tasks["doom_usb"]["cpu_id"], 0)
+        self.assertEqual(tasks["fm1_doom"]["cpu_id"], 0)
+        with self.assertRaises(ValueError):
+            task_heap_budget(source.replace("#C0doom_usb", "#C2doom_usb"))
+
+    def test_iis_allocation_is_derived_from_driver_operands(self):
+        driver = '''define i32 @iis_open(i8* %pd, i32 %cbuf) {
+  %ch32 = zext i8 %ch_num.0 to i32
+  %bytes = shl nuw nsw i32 %ch32, 3
+  %samples = load i16, i16* %sr_points.ptr, align 2
+  %sample32 = zext i16 %samples to i32
+  %size = mul nuw nsw i32 %bytes, %sample32
+  %buffer = call i8* @malloc(i32 %size)
+  ret i32 0
+}
+'''
+        self.assertEqual(iis_heap_allocations(driver)["total_requested_bytes"], 1024)
+        for changed in (driver.replace(", 3", ", 2"),
+                        driver.replace("zext i16 %samples", "zext i8 %samples"),
+                        driver.replace("%ch_num.0", "%unreviewed_channel"),
+                        driver.replace("ret i32 0", "%second = call i8* @malloc(i32 %size)\n  ret i32 0")):
+            with self.assertRaises(ValueError):
+                iis_heap_allocations(changed)
+
+    def test_usb_allocation_measurement(self):
+        cdc = 'define void @cdc_register(i8 %id) {\n call i8* @zalloc(i32 200)\n call i8* @malloc(i32 64)\n}\n'
+        config = 'define i32 @usb_config(i8 %id) {\n call i8* @zalloc(i32 972)\n}\n'
+        self.assertEqual(usb_heap_allocations(cdc, config)["total_requested_bytes"], 1236)
+        with self.assertRaises(ValueError):
+            usb_heap_allocations(cdc, config.replace("972", "1024"))
+
+    def test_sdfilesystem_keeps_stock_configuration_drivers(self):
+        nm = "\n".join((
+            "02000120 R _vfs_ops_begin", "02000120 R sdfile_vfs_ops",
+            "02000198 R nor_sdfile_vfs_ops", "02000210 R sdfile_ext_vfs_ops",
+            "02000288 R _vfs_ops_end"))
+        self.assertEqual(verify_sdfilesystem(nm)["registration_bytes"], 360)
+        for changed in (nm.replace("sdfile_ext_vfs_ops", "missing_driver"),
+                        nm.replace("02000288", "02000300"),
+                        nm.replace("02000198", "02000199"),
+                        nm + "\n02000400 R fat_vfs_ops"):
+            with self.assertRaises(ValueError):
+                verify_sdfilesystem(changed)
+
+
+if __name__ == "__main__":
+    unittest.main()
