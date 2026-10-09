@@ -147,12 +147,21 @@ reference fixtures enable the additional music/effects contracts; see
 Supply a lawful original Doom shareware IWAD locally:
 
 ```powershell
-python tools/stage_wad.py C:\path\to\doom1.wad build\stage-menu-ui.wad --map E1M1 --silent --prune-graphics --prune-sprites --no-attract-art --no-ui --menu-ui --pixelate 4 --weapon-pixelate 1 --fist-pixelate 2 --compact-assets
-python tools/pack_archive.py build\stage-menu-ui.wad build\menu-ui-4k.fmd --block-size 4096
-python tools/make_sound_bank.py --wad C:\path\to\doom1.wad --menu --output-dir build\sound-bank
-python tools/make_music_score.py C:\path\to\doom1.wad build\music-original
-python tools/make_genmidi_bank.py C:\path\to\doom1.wad build\opl-bank
+python tools/convert_shareware_wad.py C:\path\to\doom1.wad
 ```
+
+The public converter runs the individual staging, FMD1, sound, music and
+GENMIDI tools for the current E1M1 profile. It writes the archive, generated
+banks and hash manifest under ignored `build/shareware-e1m1/`. Choose a fresh
+output directory when converting again:
+
+```powershell
+python tools/convert_shareware_wad.py C:\path\to\doom1.wad --output-dir build\shareware-e1m1-run2
+```
+
+These generated game-data files stay local and must not be committed. The
+underlying `stage_wad.py`, `pack_archive.py` and bank converters remain
+available for individual conversion steps.
 
 The staged WAD keeps original image menus and map geometry. Its zero-length
 music marker saves WAD-cache space; playback uses the separate immutable score.
@@ -160,16 +169,17 @@ Lossless patch-column/payload sharing and patch-index compaction preserve the
 decoded graphics. Regenerate from the original IWAD: an older pruned archive
 may already have lost `AASTINKY` and `WALL00_3`, needed to retain texture index
 zero and keep `BIGDOOR2` nonzero. The tested profile is 553,048 B as a WAD and
-170,636 B as a 4 KiB-cache FMD1 archive. Sizes depend on the input.
+170,636 B as a 4 KiB-cache FMD1 archive. Sizes depend on the input. The
+conversion manifest records the exact source and output hashes.
 
 FMD1 is a compressed virtual WAD format. For host IWAD discovery, copy the
 archive to a local `doom1.wad`; the reader recognizes its format. The Windows
 runner needs `zlib1.dll` on PATH, such as Git for Windows supplies.
 
 ```powershell
-Copy-Item build\menu-ui-4k.fmd build\doom1.wad
+Copy-Item build\shareware-e1m1\e1m1-4k.fmd build\doom1.wad
 .\build\Release\fm1_doom_host.exe build\doom1.wad 120 build\e1m1.ppm 2
-python tools/pack_archive.py build\menu-ui-4k.fmd build\restored.wad --unpack
+python tools/pack_archive.py build\shareware-e1m1\e1m1-4k.fmd build\restored.wad --unpack
 ```
 
 See [low-memory build instructions](LOW_MEMORY_EXPERIMENT.md) for the generated
@@ -187,7 +197,7 @@ local boot baseline described in [TARGET_CANDIDATE.md](TARGET_CANDIDATE.md).
 ```powershell
 python tools/compile_target_engine.py --fm1-root F:\dev\fm1 --lowres
 python tools/compile_target_port.py --fm1-root F:\dev\fm1 --lowres
-python tools/build_target_candidate.py build\menu-ui-4k.fmd --fm1-root F:\dev\fm1 --music-bank build\music-original\music_score.c
+python tools/build_target_candidate.py build\shareware-e1m1\e1m1-4k.fmd --fm1-root F:\dev\fm1 --sound-bank build\shareware-e1m1\sound-bank\fm1_doom_sound_bank.c --music-bank build\shareware-e1m1\music-original\music_score.c --genmidi-bank build\shareware-e1m1\opl-bank\genmidi_bank.c
 ```
 
 For incremental builds on the current bench, the retained accepted archive is

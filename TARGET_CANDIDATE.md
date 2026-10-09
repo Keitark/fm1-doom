@@ -142,14 +142,10 @@ artifacts; no game data is committed.
 ```powershell
 git submodule update --init
 python tools/make_lowres_engine.py
-python tools/stage_wad.py C:\path\to\doom1.wad build\stage-menu-ui.wad --map E1M1 --silent --prune-graphics --prune-sprites --no-attract-art --no-ui --menu-ui --pixelate 4 --weapon-pixelate 1 --fist-pixelate 2 --compact-assets
-python tools/pack_archive.py build\stage-menu-ui.wad build\menu-ui-4k.fmd --block-size 4096
-python tools/make_sound_bank.py --wad C:\path\to\doom1.wad --menu --output-dir build\sound-bank
-python tools/make_music_score.py C:\path\to\doom1.wad build\music-original
-python tools/make_genmidi_bank.py C:\path\to\doom1.wad build\opl-bank
+python tools/convert_shareware_wad.py C:\path\to\doom1.wad
 python tools/compile_target_engine.py --fm1-root F:\dev\fm1 --lowres
 python tools/compile_target_port.py --fm1-root F:\dev\fm1 --lowres
-python tools/build_target_candidate.py build\menu-ui-4k.fmd --fm1-root F:\dev\fm1 --music-bank build\music-original\music_score.c
+python tools/build_target_candidate.py build\shareware-e1m1\e1m1-4k.fmd --fm1-root F:\dev\fm1 --sound-bank build\shareware-e1m1\sound-bank\fm1_doom_sound_bank.c --music-bank build\shareware-e1m1\music-original\music_score.c --genmidi-bank build\shareware-e1m1\opl-bank\genmidi_bank.c
 ```
 
 The stage tool's `--silent` removes audio from the WAD. Sound and music are

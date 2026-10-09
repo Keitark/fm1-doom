@@ -434,14 +434,15 @@ distinction; the percussion path is not sampled PCM playback.
 Supply a lawful original shareware IWAD containing D_E1M1 and GENMIDI:
 
 ```powershell
-python tools/make_sound_bank.py --wad C:\path\to\doom1.wad --menu --output-dir build\sound-bank
-python tools/make_music_score.py C:\path\to\doom1.wad build\music-original
-python tools/make_genmidi_bank.py C:\path\to\doom1.wad build\opl-bank
+python tools/convert_shareware_wad.py C:\path\to\doom1.wad
 ```
 
-Use `--music-bank build/music-original/music_score.c` when linking the target.
-The older WHX/IMA effect generator remains available for compatibility. Native
-PCM blocks have an exact sample count and no padded playback tail.
+The tool creates private output under ignored `build/shareware-e1m1/`. When
+linking that output, pass its generated `sound-bank/fm1_doom_sound_bank.c`,
+`music-original/music_score.c` and `opl-bank/genmidi_bank.c` paths to the target
+builder. The individual bank scripts and older WHX/IMA effect generator remain
+available for custom workflows. Native PCM blocks have an exact sample count
+and no padded playback tail.
 
 The OPL driver is derived from GPL Chocolate Doom via the pinned
 [rp2040-doom](https://github.com/kilograham/rp2040-doom) source. emu8950 retains
