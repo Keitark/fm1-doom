@@ -136,17 +136,19 @@ not a completed 30 FPS test.
 
 ## Reproduce without touching the device
 
-Use a lawful local Doom shareware IWAD. The commands create only ignored local
-artifacts; no game data is committed.
+Use the all-in-one script to fetch the pinned Debian shareware package, convert
+the local IWAD, compile the target and create `app.bin`. The output is private
+and ignored; the script does not contact a writer or device.
 
 ```powershell
-git submodule update --init
-python tools/make_lowres_engine.py
-python tools/convert_shareware_wad.py C:\path\to\doom1.wad
-python tools/compile_target_engine.py --fm1-root F:\dev\fm1 --lowres
-python tools/compile_target_port.py --fm1-root F:\dev\fm1 --lowres
-python tools/build_target_candidate.py build\shareware-e1m1\e1m1-4k.fmd --fm1-root F:\dev\fm1 --sound-bank build\shareware-e1m1\sound-bank\fm1_doom_sound_bank.c --music-bank build\shareware-e1m1\music-original\music_score.c --genmidi-bank build\shareware-e1m1\opl-bank\genmidi_bank.c
+python tools/build_shareware_app.py --fm1-root F:\dev\fm1
 ```
+
+To use an IWAD already on disk, add `--wad C:\path\to\doom1.wad`. The final
+plain UBOOT input is `build/shareware-rom/app.bin`; pass it to a writer's
+`-app` option. It is not a full raw-flash image and this script never flashes.
+The individual asset and target-build commands below remain available for
+manual builds.
 
 The stage tool's `--silent` removes audio from the WAD. Sound and music are
 generated separately from the lawful source IWAD into private XIP banks;

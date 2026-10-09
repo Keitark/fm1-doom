@@ -142,6 +142,23 @@ sound. It produces the video adapter's output locally. Private audio banks and
 reference fixtures enable the additional music/effects contracts; see
 [AUDIO.md](AUDIO.md).
 
+## Fetch shareware data and build the FM-1 app
+
+The one-command build downloads Debian's `doom-wad-shareware` 1.9.fixed-5
+package, verifies its pinned SHA-256, extracts the local IWAD and Debian
+copyright notice, converts the E1M1 assets, then builds the private `app.bin`:
+
+```powershell
+python tools/build_shareware_app.py --fm1-root F:\dev\fm1
+```
+
+Debian [lists the `doom-wad-shareware` package as non-free](https://packages.debian.org/trixie/doom-wad-shareware); its [copyright record](https://sources.debian.org/src/doom-wad-shareware/1.9.fixed-5/debian/copyright/) identifies id Software's data and records its shareware terms. To use an IWAD you already have, pass `--wad C:\path\to\doom1.wad`. All downloads, extracted data, converted assets and the resulting app are written below ignored `build/shareware-rom/`; they are not part of this repository's GPL-2.0 source license and must not be committed.
+
+The result is the plain WL82 UBOOT `app.bin` for the writer's `-app` option,
+not a complete raw-flash dump. The script does not contact a writer or flash a
+device. Its manifest records the source and app hashes. Use a fresh directory
+with `--output-dir build\shareware-rom-run2` for another build.
+
 ## Prepare the current E1M1 assets
 
 Supply a lawful original Doom shareware IWAD locally:
