@@ -4,7 +4,22 @@ The **original Doom engine** on the M-VAVE FM-1, based on
 [Doomgeneric](https://github.com/ozkl/doomgeneric) pinned at
 `dcb7a8dbc7a16ce3dda29382ac9aae9d77d21284` under GPL-2.0.
 
-## Current checkpoint
+## Latest build receipt (2026-10-09)
+
+The full local shareware pipeline at Doom repo commit
+`15510abb4015aca652cf1673000e784e88be3121` produced a 567,376-byte plain WL82
+UBOOT `app.bin`, SHA-256
+`ca1da356db77b36496fde06e6da4e7ccb32b38525241a1a88ef4626bbc7eca39`.
+Its private manifest reports `uboot_app_input_ready_unflashed`,
+`hardware_boot_verified: false` and `device_operations_performed: false`.
+This exact candidate has not been flashed or confirmed running on hardware.
+Earlier Doom revisions ran on FM-1, but that is not acceptance of this build.
+
+See [REPRODUCING.md](REPRODUCING.md) for the clean-checkout setup, external
+FM-1/SDK prerequisites, audited boot-baseline command and the boundary between
+producing `app.bin` and verifying it on the device.
+
+## Hardware checkpoint (2026-10-08)
 
 The remote NES FX image `d6884aae...` completed sector verification and a full
 1 MiB readback, but remains blank/frozen after one manual cold start. Offline
@@ -206,10 +221,14 @@ See [low-memory build instructions](LOW_MEMORY_EXPERIMENT.md) for the generated
 
 Use the pinned SDK/toolchain through the existing
 [FM-1 board project](https://github.com/Keitark/fm1-tracker):
-use its `codex/4-doom-boot-support` branch (companion
+use `codex/4-doom-boot-support` at
+`20800a32d1c17389560f64005c007bc2c6f9444c` (companion
 [PR #5](https://github.com/Keitark/fm1-tracker/pull/5)) for the shared scanner,
-encoder, LCD, ADC and audio sources. Target builds also require the reviewed
-local boot baseline described in [TARGET_CANDIDATE.md](TARGET_CANDIDATE.md).
+encoder, LCD, ADC and audio sources. The separate WL82 SDK must be at
+`e30b1ee375d1f2993fc23bf92c8b99006a6e5f9d`, with the Jieli PI32 tools in
+`C:\JL\pi32\bin`. Target builds also require the reviewed local boot baseline
+described in [TARGET_CANDIDATE.md](TARGET_CANDIDATE.md). The complete clean
+checkout and setup sequence is in [REPRODUCING.md](REPRODUCING.md).
 
 ```powershell
 python tools/compile_target_engine.py --fm1-root F:\dev\fm1 --lowres

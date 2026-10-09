@@ -1,5 +1,20 @@
 # FM-1 Doom UBOOT `app.bin` input
 
+## Latest shareware build receipt (2026-10-09)
+
+The public one-command build reproduced the corrected allocator candidate at
+567,376 B, SHA-256
+`ca1da356db77b36496fde06e6da4e7ccb32b38525241a1a88ef4626bbc7eca39`.
+Its local manifest reports `uboot_app_input_ready_unflashed`,
+`hardware_boot_verified: false` and `device_operations_performed: false`. No
+hardware boot is claimed for this app. The manifest and generated data remain
+under ignored `build/shareware-rom/` and are not committed.
+
+The build needs a separately provisioned FM-1 checkout, the pinned Jieli SDK
+and toolchain, and a generated audited boot baseline. See
+[REPRODUCING.md](REPRODUCING.md) for exact pins, setup, baseline generation and
+the device-verification boundary.
+
 ## Current source revision (2026-10-08)
 
 The source retains E1M1 and current 4×4 world/enemy assets. Gameplay always
@@ -136,9 +151,12 @@ not a completed 30 FPS test.
 
 ## Reproduce without touching the device
 
-Use the all-in-one script to fetch the pinned Debian shareware package, convert
-the local IWAD, compile the target and create `app.bin`. The output is private
-and ignored; the script does not contact a writer or device.
+After preparing the external FM-1 checkout, pinned SDK/toolchain and reviewed
+boot baseline as described in [REPRODUCING.md](REPRODUCING.md), use the
+all-in-one script to fetch the pinned Debian shareware package, convert the
+local IWAD, compile the target and create `app.bin`. The script does not create
+the external boot baseline and does not contact a writer or device. The output
+is private and ignored.
 
 ```powershell
 python tools/build_shareware_app.py --fm1-root F:\dev\fm1
